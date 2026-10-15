@@ -68,6 +68,14 @@ int axis_seg_tri(const float *p0, const float *p1, const float *a, const float *
                  const float *c, float *outT, float *hit);
 static float gMapMin[3] = {0,0,0}, gMapMax[3] = {0,0,0};
 static float gProjPrev[MAXPROJ][3];
+
+/* the verified animated-prop layer (axis_prop.c): a proximity gate that opens
+ * (phase 0->1, rises) while a projectile is within range and closes otherwise. */
+float axis_anim_phase_step(float phase, float *rate, int mode, float dt, int armed, int *callback);
+int   axis_prop_inside(float dist2, int rangeSteps);
+float axis_prop_nearest_dist2(const float *propPos, const float *actors, const int *active, int n);
+static float gPropPos[3] = {0,0,0}, gPropPhase = 0.0f, gPropRate = 0.0f;
+static int gPropRange = 0;
 static unsigned gDbgSeed = 1u;   /* cheap deterministic spread for debris velocities */
 static float dbg_rand(void) { gDbgSeed = gDbgSeed * 1103515245u + 12345u; return (float)((gDbgSeed >> 16) & 0x7fff) / 32767.0f; }
 
@@ -281,6 +289,12 @@ EMSCRIPTEN_KEEPALIVE void engine_proj_demo(void) {
         gProjs[i].age = 0; gProjs[i].lifetime = 30.0f; gProjs[i].speed = spd; gProjs[i].turnRate = 2.5f;
         gProjAlive[i] = 1;
     }
+    /* a proximity gate just outside the ring (clear of the central buildings),
+       driven by the verified axis_prop layer; the nearest ring target is within
+       its activation radius, so it opens and holds */
+    gPropPos[0] = gCenter[0] + R * 1.25f; gPropPos[1] = gCenter[1]; gPropPos[2] = gCenter[2];
+    gPropPhase = 0.0f; gPropRate = 0.0f;
+    gPropRange = (int)(gRadius * 0.004f); if (gPropRange < 1) gPropRange = 1;  /* radius = range*100 */
     projDemo = 1;
 }
 
@@ -506,6 +520,25 @@ static void frame(void) {
                 if (!gDebrisAlive[i]) continue;
                 if (axis_debris_step(&gDebris[i], sdt, 0, 0, 0, 0, 0, 0) == 2) gDebrisAlive[i] = 0;
             }
+            /* proximity gate (verified axis_prop layer): open while a projectile
+               is within range of the gate, close otherwise; projectiles are the
+               "actors" fed to the nearest-distance scan */
+            {
+                /* actors = the ring targets (persistent) + live projectiles, so the
+                   gate's nearest-actor proximity test has stable input to open on */
+                float actorBuf[(MAXTGT+MAXPROJ)*3]; int actAlive[MAXTGT+MAXPROJ]; int na = 0;
+                for (int i = 0; i < gTgtN; i++, na++) {
+                    actorBuf[na*3]=gTgt[i*3]; actorBuf[na*3+1]=gTgt[i*3+1]; actorBuf[na*3+2]=gTgt[i*3+2];
+                    actAlive[na]=gTgtAlive[i];
+                }
+                for (int i = 0; i < gProjN; i++, na++) {
+                    actorBuf[na*3]=gProjs[i].pos[0]; actorBuf[na*3+1]=gProjs[i].pos[1]; actorBuf[na*3+2]=gProjs[i].pos[2];
+                    actAlive[na]=gProjAlive[i];
+                }
+                float d2 = axis_prop_nearest_dist2(gPropPos, actorBuf, actAlive, na);
+                int cb; gPropRate = axis_prop_inside(d2, gPropRange) ? 2.0f : -2.0f;
+                gPropPhase = axis_anim_phase_step(gPropPhase, &gPropRate, 1 /*CLAMP*/, sdt, 0, &cb);
+            }
             int anyLive = 0; for (int i = 0; i < gProjN; i++) if (gProjAlive[i]) anyLive = 1;
             if (!anyLive) engine_proj_demo();                /* loop the demo */
             if (aUV >= 0) glDisableVertexAttribArray(aUV);
@@ -537,6 +570,18 @@ static void frame(void) {
                 glUniform3f(glGetUniformLocation(prog, "uColor"), 1.0f, 0.55f, 0.1f);
                 float *p = gDebris[i].pos;
                 float m[16] = { sd,0,0,0, 0,sd,0,0, 0,0,sd,0, p[0], p[1], p[2], 1 };
+                float mv[16]; mat_mul(mv, mvp, m);
+                glUniformMatrix4fv(uM, 1, GL_FALSE, mv); glUniformMatrix4fv(uMo, 1, GL_FALSE, m);
+                glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
+            }
+            /* the proximity gate: a green pillar rooted at ground level whose
+               height grows with its open phase (closed = short, open = tall) */
+            {
+                float gw = gRadius * 0.05f;
+                float H = gRadius * (0.15f + 0.9f * gPropPhase);   /* half-height grows as it opens */
+                float py = gPropPos[1] + H;                        /* base sits on the ground */
+                glUniform3f(glGetUniformLocation(prog, "uColor"), 0.2f, 0.95f, 0.4f);
+                float m[16] = { gw,0,0,0, 0,H,0,0, 0,0,gw,0, gPropPos[0], py, gPropPos[2], 1 };
                 float mv[16]; mat_mul(mv, mvp, m);
                 glUniformMatrix4fv(uM, 1, GL_FALSE, mv); glUniformMatrix4fv(uMo, 1, GL_FALSE, m);
                 glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
