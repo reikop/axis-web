@@ -25,6 +25,8 @@
 # extracted / converted assets derived from the above (also copyrighted)
 /extracted/
 /out/
+# generated locally from the user's own install (metadata derived from game data)
+/web/catalog.json
 *.gltf
 *.glb
 *.png
