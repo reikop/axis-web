@@ -796,6 +796,33 @@ again the shared `FUN_00470bc0` map-geometry subsystem (still open). So both non
 categories (type A effects, type C props) now have their offline-verifiable logic reconstructed +
 verified; what remains is actor (player/mech) movement physics and the `FUN_00470bc0` collision mesh.
 
+**Collision broad phase = `FUN_00470bc0`, reconstructed + verified (2026-10-16).** This is the shared
+collision query that the projectile sim (`FUN_00479750`) and the debris / prop updaters all call with a
+motion segment `(from, to)`. It walks every collidable prop (the type-C array, count `0x13c9b24`,
+stride `0xb3` floats = `0x2cc` bytes; a prop is live when the denormal flags at `pfVar6[-0x50]` and
+`pfVar6[0x53]` are set and its mesh `*(pfVar6[0x52]+8)` is non-null), transforms both segment endpoints
+into that prop's **local space** by its inverse matrix (basis columns interleaved in the record near
+`pfVar6[-4..6]`, translation `pfVar6[8..10]`), and runs a **3-D Cohen–Sutherland** trivial-reject +
+face-clip of the segment against the prop's local AABB (min `+0x34/0x38/0x3c`, max `+0x40/0x44/0x48`).
+The outcodes `uVar5`/`uVar4` use bits `0x1/0x10` (x min/max), `0x100/0x1000` (y), `0x10000/0x100000`
+(z); `(outA & outB) != 0` rejects; surviving props are appended as candidates and handed to the
+narrow phase `FUN_004824e0` (the triangle test — our `axis_collide.c axis_seg_tri`, Möller–Trumbore).
+`FUN_00471740` is vector normalise (returns a pointer to a static vec3). The broad-phase math is the
+offline-verifiable part, reconstructed as clean original C in `port/sim/axis_broadphase.c`:
+`axis_xform_affine` (world→local `p' = M·p + T`), `axis_aabb_outcode` (the 6-bit code with the binary's
+exact bit layout and closed-exterior boundaries — a point on a face counts as outside),
+`axis_seg_aabb_reject` (the Cohen–Sutherland `outcode(a) & outcode(b)` trivial reject) and
+`axis_seg_aabb` (a definitive slab-method segment/AABB intersection giving the entry parameter in
+`[0,1]`). `port/sim/axis_broadphase_test.c` (native `cc`, ALL PASS; `emcc`-clean) verifies the transform
+(identity / translation / 90° Y-rotation), the outcode (inside→0, each face bit, corner combination,
+on-face=outside), the trivial reject (whole-segment-outside rejects, crossing does not), the slab test
+(crossing hit with correct entry t, inside hit at t=0, miss above the box, parallel-outside miss) and —
+over 20 000 deterministic segment pairs — that a trivial reject never contradicts a slab hit. So the
+**whole collision pipeline now has reconstructed + verified layers**: broad phase (`axis_broadphase.c`,
+segment→local→AABB cull) feeding narrow phase (`axis_collide.c`, seg–triangle). The remaining input to
+it is the per-map collision geometry (the prop AABBs + meshes), which is runtime map data, and actor
+(player/mech) movement physics — the two genuinely offline-unverifiable pieces (SPEC §5 ceiling).
+
 **Two hard constraints on finishing the per-entity physics** (`FUN_00479750` et al.):
 1. *No offline ground-truth* — replays carry player state only (above).
 2. *x87 80-bit intermediates* — the decompile shows `float10` (x87 extended precision) temporaries in
