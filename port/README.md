@@ -48,21 +48,27 @@ AXIS geometry decoded by the linked-in, byte-exact `axis_shp.c`. Build it with `
 - **textures:** in mesh mode (`?i=N`) the engine finds the shape's `SHAPE\<name>` skin across the
   Image archives, decodes it with the linked-in `axis_ptx.c`, and renders it UV-mapped — verified
   (`?i=5` = `ALIEN\GIRL` textured with its real `SHAPE\ALIEN\GIRL` 256×256 skin);
-- **audio:** a ♪ button streams a `Music/*.mp3` track from the user's install (WebAudio slice).
+- **audio:** a ♪ button streams a `Music/*.mp3` track from the user's install (WebAudio slice);
+- **networking:** with `?map=NAME&mp` the engine connects to the AXIS relay (`server/relay.js`),
+  decodes each remote player's 64-byte payload with the **real type-0 wire codec** (`crypt.js`
+  `decodeState`/`encodeState`, backend `wasm`) and renders them as avatars — verified end-to-end
+  against the live relay + a Node ghost: the engine joins, decodes the ghost's real type-0 packets
+  and draws it as a floating avatar cube, status *"1 remote player via ws://… (real type-0 codec,
+  backend=wasm)"*, 0 page-errors.
 
-So the reconstruction now runs as compiled code driving real GPU rendering with textures, input
-and audio — not only as decoders. The shim pieces (GL, window/loop, keyboard, mouse, audio,
-textures) are in and verified clean (0 page-errors).
+So the reconstruction now runs as compiled code driving real GPU rendering with textures, input,
+audio and real-protocol multiplayer — not only as decoders. The shim pieces (GL, window/loop,
+keyboard, mouse, audio, textures, networking) are in and verified clean (0 page-errors).
 
 **What's left for a *playable* port:**
-- **networking** in the engine (WebSocket; the protocol is mapped in §4 and already runs as live
-  position-sharing multiplayer in `web/map.html` + `server/relay.js` — porting that into the C
-  engine is the remaining shim wiring);
 - **per-object map textures** (most building skins aren't statically resolvable — §2.9 — so this
   is partial by nature and needs per-object draws);
-- the behaviour-exact **per-tick simulation** — the one genuinely blocked pillar: it runs only
-  inside a live match, and the dead-server install can't reach one, so there is no ground-truth to
-  reconstruct against here (see `../docs/SPEC.md` §5 and §2.9).
+- the behaviour-exact **per-tick simulation** — the one genuinely blocked pillar: online play in
+  the engine today is shared positions (like the game's state replication) but *not* the original
+  deterministic combat/physics. That sim runs only inside a live match, and the dead-server install
+  can't reach one, so there is no ground-truth to reconstruct and verify against here (see
+  `../docs/SPEC.md` §5 and §2.9). The RNG/determinism core and the sim entry points are mapped and
+  reconstructed; the behaviour itself is the blocked piece.
 
 ---
 
