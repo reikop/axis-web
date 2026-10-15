@@ -59,6 +59,15 @@
           ? `rendering Shape.dat record #${idx} — ${groups} group(s). WASM backend, WebGL. (?i=N for meshes, ?map=NAME for maps)`
           : `engine_load_mesh failed (code ${groups}) for record #${idx}`;
       }
+      // self-test: ?walk dispatches a REAL held keydown('w') so the emscripten
+      // window key-callback -> keyDown[] -> frame() movement path is exercised
+      // (and screenshot-verifiable) without a human holding the key.
+      if (qs.has('walk')) {
+        setTimeout(() => {
+          window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', bubbles: true }));
+          setTimeout(() => window.dispatchEvent(new KeyboardEvent('keyup', { key: 'w', bubbles: true })), 1800);
+        }, 400);
+      }
     } catch (e) {
       statusEl.textContent = 'load failed (run via run.py so /game/ is served): ' + e.message;
     }
