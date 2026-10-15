@@ -306,6 +306,20 @@ static void frame(void) {
     }
 }
 
+static int ptrLocked = 0;
+static EM_BOOL onLockChange(int type, const EmscriptenPointerlockChangeEvent *e, void *u) {
+    (void)type; (void)u; ptrLocked = e->isActive; return EM_TRUE;
+}
+static EM_BOOL onMouseMove(int type, const EmscriptenMouseEvent *e, void *u) {
+    (void)type; (void)u;
+    if (ptrLocked && camReady) {
+        camYaw += (float)e->movementX * 0.0025f;
+        camPitch -= (float)e->movementY * 0.0025f;
+        if (camPitch > 1.5f) camPitch = 1.5f; if (camPitch < -1.5f) camPitch = -1.5f;
+    }
+    return EM_TRUE;
+}
+
 static EM_BOOL onKey(int type, const EmscriptenKeyboardEvent *e, void *u) {
     (void)u;
     int code = -1;
@@ -336,6 +350,8 @@ int main(void) {
     glGenBuffers(1, &vboPos); glGenBuffers(1, &vboNrm); glGenBuffers(1, &vboUV); glGenBuffers(1, &ibo);
     emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, 0, 1, onKey);
     emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, 0, 1, onKey);
+    emscripten_set_mousemove_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, 0, 1, onMouseMove);
+    emscripten_set_pointerlockchange_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, 0, 1, onLockChange);
     emscripten_set_main_loop(frame, 0, 1);
     return 0;
 }

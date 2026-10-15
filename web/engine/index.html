@@ -21,13 +21,30 @@
 </header>
 <div id="wrap">
   <canvas id="canvas" width="720" height="480"></canvas>
+  <div id="row" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <button id="music" type="button" style="background:#1b2026;color:#cdd3da;border:1px solid #2a3139;border-radius:6px;padding:6px 12px;cursor:pointer">♪ Music</button>
+    <span style="color:#6a727c;font-size:12px">click the canvas for mouse-look (pointer lock) · Esc to release</span>
+  </div>
   <div id="status">loading WASM…</div>
+  <audio id="bgm" src="/game/Music/Netsphere.mp3" loop preload="none"></audio>
 </div>
 <script src="/shp.js"></script>
 <script src="axis_engine.js"></script>
 <script>
   const statusEl = document.getElementById('status');
   const canvas = document.getElementById('canvas');
+  // mouse-look: lock the pointer on canvas click (the WASM reads movementX/Y while locked)
+  canvas.addEventListener('click', () => { try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} });
+  // pointer lock can be refused (e.g. no user-activated top-level context); ignore it quietly
+  document.addEventListener('pointerlockerror', () => {}, false);
+  // music: stream a track from the user's own Music/ (started by a click, per autoplay rules)
+  const bgm = document.getElementById('bgm'), musicBtn = document.getElementById('music');
+  musicBtn.addEventListener('click', async () => {
+    try {
+      if (bgm.paused) { await bgm.play(); musicBtn.textContent = '❚❚ Music'; }
+      else { bgm.pause(); musicBtn.textContent = '♪ Music'; }
+    } catch (e) { musicBtn.textContent = '♪ (no audio)'; }
+  });
   const qs = new URLSearchParams(location.search);
   const mapName = qs.get('map');                         // ?map=CUBE  -> render a whole map
   const idx = qs.has('i') ? (+qs.get('i')) : 0;          // ?i=123     -> render one mesh
