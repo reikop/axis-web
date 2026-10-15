@@ -679,6 +679,20 @@ re-running it against a replay's inputs/RNG and comparing to the recorded positi
 major multi-function effort (10 KB of vector math + reverse the state-block field layout) that is not
 finished here.
 
+*Characterised (begun, 2026-10-16):* `FUN_00479750` is the **projectile / weapon-entity per-tick
+sim**. It walks an entity array at `in_ECX + 0x202ef34 + i*0x4e8` (stride `0x4e8` = 1256 B); per
+entity: owner actor `[0x2e]` (indexes actor states `*0x8888`), current position `[0x21..0x23]`,
+previous position `[0x1e..0x20]`, target `[0x31..0x33]`, lifetime `[0x1c]/[0x1d]`, cooldown `[0x30]`.
+It computes the vector from the entity to its owner/target (`FUN_00466c00` = length/normalise),
+homes toward the target (`target − pos`), decrements lifetime/cooldown by `param_2` (= frame `dt`),
+spawns trail/effect records (`FUN_00478dd0`), and on expiry applies a force/knockback into the
+target actor's state (`*(float*)(0x1ce1c04 + actor*0x8888) = Δ * k * 10.0`). So the client *does*
+run projectile motion + effect + force application locally (damage *scoring* still server-side — the
+client only applies type-14 HP). The player **movement** physics (actor input→accel) is a *different*
+function still to be pinned among `FUN_00478f10/0048e220/004901d0`; the per-tick sim is multi-function
+and only partially characterised. This is the concrete, in-client reconstruction target — real work,
+accurately scoped, not yet done.
+
 Behaviour-exact reconstruction of these + verification. **Update:** the **Emscripten toolchain
 is now set up and working** (Ubuntu/WSL2, `emcc 3.1.69`, `node v22`) — `port/build.sh` compiles
 the reconstructed C to a verified standalone WASM module (see `../port/README.md`), so the
