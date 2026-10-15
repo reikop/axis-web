@@ -712,6 +712,25 @@ KB total) + their per-entity struct layouts + the `0x8888` actor block fields.**
 inputs/RNG against the recorded positions, since the RNG is verified) but it is a large multi-session
 effort, and it is honestly **not done** — the port is not complete, and this is what remains.
 
+**Reconstruction started (2026-10-16): `port/sim/axis_sim.c`.** The tick functions that can be
+reconstructed cleanly and completely are done and compile warning-free (`emcc -O2 -Wall`): the
+animation/effect frame timer (`FUN_004962d0`), the three per-entity dispatchers
+(`FUN_00478f10/0047c480/004901d0`, exact bases/counts/strides), the scene helper (`FUN_0048f1e0`),
+and the **type-1 input builder** (`FUN_0048d080` — appearance/aim/input, the 0x10-channel bitmask
+loop, the two shared-pool draws via the *verified* `axis_rng_draw`, the spawn/param table lookups,
+send + encrypted replay log). They operate on the game-state base `S` exactly as the binary's
+`in_ECX`; unreconstructed callees are `extern`. These are honest logic/structure reconstructions,
+not behaviour-verified.
+
+**Two hard constraints on finishing the per-entity physics** (`FUN_00479750` et al.):
+1. *No offline ground-truth* — replays carry player state only (above).
+2. *x87 80-bit intermediates* — the decompile shows `float10` (x87 extended precision) temporaries in
+   the vector math. WebAssembly has only f32/f64, so a WASM reconstruction **cannot be bit-identical**
+   to the 2005 client's computation. For a web-only deployment that is fine (all peers are the same
+   WASM build, internally consistent); it just can't interoperate in lockstep with original clients —
+   which no longer exist anyway. So "behaviour-exact vs the original" is not even achievable in WASM
+   for this code; "internally consistent web-only" is, and is the right target, once reconstructed.
+
 Behaviour-exact reconstruction of these + verification. **Update:** the **Emscripten toolchain
 is now set up and working** (Ubuntu/WSL2, `emcc 3.1.69`, `node v22`) — `port/build.sh` compiles
 the reconstructed C to a verified standalone WASM module (see `../port/README.md`), so the
