@@ -351,13 +351,33 @@ at a modal — *"게임서버를 선택하지 않았습니다. AxisPlay.exe를 �
 주십시오"* ("no game server selected; run AxisPlay.exe and select a server first"). The scene
 (map + models + textures, where `FUN_00456070` fires) only loads after that gate, and **this
 install ships only `AXIS.EXE`** — no `AxisPlay.exe` launcher and no server config — while the
-2005 servers are long dead. So the texture-binding capture needs the game first driven past the
-server-select gate into a scene: either the replay-playback path (the `.ape` attract/demo loads
-a map with no live server) or Frida-patching the gate check and stubbing the net connect so a
-map loads offline. That is a real, bounded next step, not a static one.
+2005 servers are long dead. So the texture-binding capture needs the game first driven past the server-select gate.
 
-Until then the mesh/map viewers render untextured flat-shaded geometry and the texture
-gallery (§2.2) shows the textures standalone.
+**Gate bypassed + bindings captured (done).** The gate `FUN_0042b690` just reads the registry
+key `HKCU\SOFTWARE\AxisArena\SelectServer` (values `TcpDNS`/`LadderDNS`/`TcpPort`/`LadderPort`,
+normally written by AxisPlay.exe) — if present it proceeds, else it shows the error. Creating
+that key with dummy values (127.0.0.1) lets the client boot normally — no binary patch needed.
+The game then runs (screenshot-verified: the AXIS title / "INITIALIZING NETSPHERE" screen
+renders, using `iftex/axis_title`), and the Frida capture (`port/frida/capture_textures.js`,
+hooking `FUN_004658d0` + `FUN_00456070`) recorded the real bindings:
+
+* **131 texture lookups, 59 distinct** on the boot/menu scene. UI comes from the `iftex/` pack
+  (`axis_title`, `mainmenu01/02`, `arenamenu01/02`, `gameconnect`, `english8/16`, `han_cho`…).
+* **Per-group 3D binding = one `Texture\NN` slot** — 55 shape render-objects each resolved a
+  single `Texture\00` / `Texture\01` / `Texture\02` / `Texture\07` (a small material index
+  formatted `Texture\%02d`), while item models use shape-relative paths
+  (`Shape\item\warpzone\{warpzone,teleport_ani,cic_ani}`). This is why the static group+4 bytes
+  read as junk: the real name is this short runtime-built `Texture\NN`, not stored whole.
+
+So the binding scheme is now known. The remaining refinement for textured rendering is to locate
+that small material index per group in the static `.shp` struct (and read the shape name during
+capture, to tie each render-object back to a named mesh) → then map `Texture\NN` to the
+`Image*.dat` entries the viewers already decode. `port/frida/capture_textures.js` reproduces the
+capture (its header has the one-time registry setup; remove with
+`reg delete "HKCU\SOFTWARE\AxisArena" /f`).
+
+Until that mapping is wired in, the mesh/map viewers render untextured flat-shaded geometry and
+the texture gallery (§2.2) shows the textures standalone.
 
 ### 2.10 Skeleton / animation (`Data/Skeleton.dat`, `class SkeletonManager`)
 
