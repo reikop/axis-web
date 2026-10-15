@@ -105,3 +105,34 @@ int axis_proj_update(axis_proj_t *p, const float *actors, const int *active, int
     }
     return 1;
 }
+
+int   axis_seg_sphere(const float *p0, const float *p1, const float *c, float r, float *outT);
+void  axis_impact_force(const float *dir, float mag, float *outForce);
+
+/* Complete projectile COMBAT tick: advance by one homing step, then sweep the
+ * frame segment (old->new pos) against each live actor's bounding sphere; on the
+ * nearest hit, add the impact knockback into that actor's force accumulator,
+ * kill the projectile, and return the hit actor index. Returns -2 if it expired
+ * without a hit, -1 if still flying. `forces` is n*3 floats (accumulated per
+ * actor); `radius` the actor hit radius. */
+EXPORT
+int axis_proj_combat(axis_proj_t *p, const float *actors, float *forces, const int *active,
+                     int n, float radius, float mag, float maxRange, float dt) {
+    float prev[3] = { p->pos[0], p->pos[1], p->pos[2] };
+    if (!axis_proj_update(p, actors, active, n, maxRange, dt)) return -2;   /* expired */
+    int hit = -1; float bestT = 2.0f;
+    for (int k = 0; k < n; k++) {
+        if (!active[k] || k == p->owner) continue;
+        float t;
+        if (axis_seg_sphere(prev, p->pos, actors + k*3, radius, &t) && t < bestT) { bestT = t; hit = k; }
+    }
+    if (hit >= 0) {
+        float dir[3]; axis_vec_normalize(p->vel, dir);              /* travel direction */
+        float k = mag * 10.0f;                                      /* engine ×10 world scale */
+        forces[hit*3+0] += dir[0]*k;                               /* knockback forward along travel */
+        forces[hit*3+1] += dir[1]*k;
+        forces[hit*3+2] += dir[2]*k;
+        p->age = p->lifetime;                                       /* consume the projectile */
+    }
+    return hit;
+}
