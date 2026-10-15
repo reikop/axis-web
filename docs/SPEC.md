@@ -369,17 +369,21 @@ hooking `FUN_004658d0` + `FUN_00456070`) recorded the real bindings:
   (`Shape\item\warpzone\{warpzone,teleport_ani,cic_ani}`). This is why the static group+4 bytes
   read as junk: the real name is this short runtime-built `Texture\NN`, not stored whole.
 
-So the binding scheme is now known. **But `Texture\NN` is a per-model alias, not a global
-archive entry** (verified: `TEXTURE\00`/`01`/`07` match **0** entries across `Image0..5.dat`,
-while the shape-relative names the capture also showed — `SHAPE\ITEM\WARPZONE\CIC_ANI`,
-`TEXTURE\ITEM_DAMAGEMAP_ANI0` — *are* real Image0.dat entries). So when a specific model loads,
-the game loads that model's own skin and registers it in the texture manager under the generic
-alias `Texture\NN`; `FUN_004658d0` then binds the group to that alias. The group→alias link is
-captured; the remaining link for textured rendering is **alias→source**: what each `Texture\NN`
-is loaded from for a given model (capturable by hooking the texture-register/create path that
-feeds the six pages `FUN_00456070` searches, to record `(alias, source entry)` during model
-load), plus the per-group material index in the static `.shp` and the shape name during capture.
-Then the viewers map each group to the right `Image*.dat` texture they already decode.
+So the binding scheme is now known, and **the full chain is confirmed end-to-end**: a mesh
+group binds to `Texture\NN`, and `TEXTURE\NN` **is a real entry in `Image5.dat`** (e.g.
+`TEXTURE\00`..`TEXTURE\05`(+`_ALPHA`) in Image5, `TEXTURE\08` in Image0; the `IFTEX\*` UI set
+in Image3/Image5; the warpzone/item names in Image0) — i.e. the ordinary PTX textures the
+viewers **already decode** (`ptx.js`, §2.2). (An earlier note here said `TEXTURE\NN` matched no
+archive entry; that was a backslash-escaping bug in the search — corrected.) The dynamic loader
+`FUN_00454f30` confirms it: every slot loads as **PTX (fmt 0)** by its full name
+(`TEXTURE\00`, `IFTEX\MAINMENU01`, …) with a `*` context prefix, resolving straight into the
+six Image pages that `FUN_00456070` searches.
+
+So the only piece left for textured rendering is the **per-group material index NN** — which
+`Texture\NN` each group uses. The dynamic capture gives it per render-object (groups bound to
+`Texture\00`/`01`/`02`/`07`); baking a `shape → [group → Texture\NN]` table (hook the shape
+loader for names alongside `FUN_004658d0`) lets the mesh/map viewers load `TEXTURE\NN` from the
+Image archives via `ptx.js` and apply it per group.
 `port/frida/capture_textures.js` reproduces the capture (its header has the one-time registry
 setup; remove with `reg delete "HKCU\SOFTWARE\AxisArena" /f`).
 
@@ -388,11 +392,11 @@ setup; remove with `reg delete "HKCU\SOFTWARE\AxisArena" /f`).
 `ecx + 0xc0128 + slot*0x68`), transforms it with the **context prefix `DAT_004b22cc`**
 (`FUN_0049e29b`) into the real source name, then by a per-slot format flag (`ecx+0xc0114`)
 loads it as **PTX** (from the Image pages — flag 0), **BMP** (flag 1) or **RAW** (flag 2),
-building `_ALPHA` / `_COLOR` sibling names with `sprintf` (`"%s_ALPHA"`, `"%s_%s"`…). So the
-alias→source resolution is "`DAT_004b22cc` prefix + slot name", and the prefix is what varies by
-model/map context. Capturing `alias→source` therefore means hooking `FUN_00454f30` to record
-`(DAT_004b22cc, slot name, resolved source, format)` during a model load — the precise, final
-capture needed to drive textured rendering, now that the gate bypass makes the game runnable.
+building `_ALPHA` / `_COLOR` sibling names with `sprintf` (`"%s_ALPHA"`, `"%s_%s"`…). **Captured
+live** (hooking `FUN_00454f30`): the context prefix `DAT_004b22cc` is a constant `*`, and each
+slot's stored name is the **full** `TEXTURE\NN` / `IFTEX\…` / `SHAPE\ITEM\…`, all loaded as
+**PTX (fmt 0)** — so the resolved source is exactly that name in the Image pages, which `ptx.js`
+decodes. The alias→source question is thus answered: `Texture\NN` → the `TEXTURE\NN` PTX entry.
 
 Until that mapping is wired in, the mesh/map viewers render untextured flat-shaded geometry and
 the texture gallery (§2.2) shows the textures standalone.
