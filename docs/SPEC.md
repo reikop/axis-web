@@ -530,4 +530,35 @@ by `run.py` at `/game/`; `web/audio.json` holds only filenames — no audio is c
    damage) — i.e. the game simulation itself, not the wire format.
 5. (optional) full PTX block decoder for a standalone PNG extractor — done (`tools/ptx_decode.py`).
 
+## 5. Simulation & determinism (entry points mapped)
+
+The sim is the remaining multi-year pillar; its structure is now mapped so it can be
+reconstructed function-by-function.
+
+**Shared-RNG determinism.** The game is deterministic lockstep for *decisions* (spawns, AI,
+damage rolls): it draws from a **precomputed 4096-entry random pool** `DAT_00a11bc8[0x1000]`
+through a single running index `DAT_00a20488`, as `pool[idx++ & 0xfff] % N`. Every peer holds
+the same pool and the same index, so every randomized decision matches across clients — which
+is why each packet also carries RNG samples (type 1, `[44..55]`) to keep the index in lockstep.
+The pool is runtime-filled (`.bss`, zero in the image); its generator/seed is the one piece
+still to locate (then the pool is reproducible → decisions become reproducible offline).
+
+**Round/level reset `FUN_0049d570`** (the `"incorrect level %d"` setup): on round start it draws
+six values from the RNG pool to choose spawn points and round parameters (per-map spawn tables
+at `0x15de6c8`, `0x15fff84`, `0x163b588`, `0x1679b34`, `0x16c5178`, `0x175522c`), copies the
+spawn list, resets every actor's state block (stride `0x8888`), loads the level, and seeds the
+view. This is where a match begins; it's RNG-driven so all peers spawn identically.
+
+**Per-tick simulation**, driven each frame by the network tick `FUN_00497d70` after it applies
+inbound packets (§4): `FUN_004962d0`, `FUN_0047c480`, `FUN_00478f10`, `FUN_0048e220`,
+`FUN_004901d0`, `FUN_0048f1e0` — movement/physics, weapons/projectiles, collision, damage. Each
+reads an actor's state block (`in_ECX + 0x1ecca70 + actor*0x8888`) whose fields the type-0 apply
+writes (position `+0x1ac/1b0/1b4`, orientation `+0x1b8/1bc/1cc`, velocity, weapon sub-records).
+These are the concrete functions to reconstruct next, each landing as a `port/src/*.c` module
+(the pattern `axis_crypt.c` / `axis_netdecode.c` already follow) for the Emscripten/WASM build.
+
+Behaviour-exact reconstruction of these + verification needs either the Emscripten toolchain
+(WSL) or a dynamic trace of the running game for ground-truth values — the honest boundary of
+what the static, no-toolchain environment that produced this repo can finish.
+
 See `../port/README.md` for how these feed the approach-B WASM build.
