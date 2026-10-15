@@ -48,6 +48,7 @@
   </aside>
   <div class="view"><canvas id="c"></canvas><div class="hud" id="hud"></div></div>
 </div>
+<script src="shp.js"></script>
 <script>
 const cv=document.getElementById("c"),ctx=cv.getContext("2d"),hud=document.getElementById("hud");
 let DPR=Math.min(devicePixelRatio||1,2);
@@ -120,18 +121,42 @@ cv.addEventListener("wheel",e=>{e.preventDefault();dist=Math.max(0.6,Math.min(8,
 document.getElementById("wire").addEventListener("change",e=>{wire=e.target.checked;draw();});
 document.getElementById("spin").addEventListener("change",e=>{spin=e.target.checked;});
 
-fetch("shapes/index.json").then(r=>r.json()).then(list=>{
-  // index entries are {id,name,v,t}; keep back-compat with a plain string list
-  const items=list.map(e=>typeof e==="string"?{id:e,name:e,v:0,t:0}:e);
-  const ids=items.map(e=>e.id);
+// Live mode: decode meshes in-browser straight from Shape.dat (shp.js), no pre-export.
+async function initLive(){
+  const ab=await (await fetch("/game/Data/Shape.dat")).arrayBuffer();
+  const toc=window.AXISShape.readTOC(ab);
   const sel=document.getElementById("sel");
-  sel.innerHTML=items.map(e=>`<option value="${e.id}">${e.name}${e.t?`  (${e.t} tris)`:""}</option>`).join("");
-  let start=ids.includes("ALIEN_GIRL")?"ALIEN_GIRL":ids[0];
-  try{const s=localStorage.getItem("axshape"); if(s&&ids.includes(s))start=s;}catch(e){}
-  sel.value=start; sel.addEventListener("change",()=>load(sel.value));
-  document.querySelector(".sub").textContent=`real geometry from Shape.dat · ${items.length} meshes`;
-  resize(); load(start); loop();
-}).catch(err=>{ resize(); hud.textContent="Run `python run.py` to generate shapes/."; });
+  sel.innerHTML=toc.map((e,i)=>`<option value="${i}">${e.name}</option>`).join("");
+  function loadIdx(i){ const e=toc[i];
+    try{ const r=window.AXISShape.parseShape(ab,e.off,e.end);
+      if(!r.pos.length||!r.tris.length){hud.textContent="(empty mesh)";return;}
+      M={name:e.name,pos:r.pos,nrm:r.nrm,uv:r.uv,tris:r.tris}; fit();
+      document.getElementById("stats").innerHTML=
+        `<span>shape</span><b>${e.name}</b><span>vertices</span><b>${r.pos.length}</b><span>triangles</span><b>${r.tris.length}</b>`;
+      draw(); try{localStorage.setItem("axshapei",i);}catch(_){}
+    }catch(err){ hud.textContent="decode: "+err.message; }
+  }
+  let start=toc.findIndex(e=>e.name.toUpperCase().endsWith("GIRL")); if(start<0)start=0;
+  try{const s=+localStorage.getItem("axshapei"); if(s>=0&&s<toc.length)start=s;}catch(e){}
+  sel.value=start; sel.addEventListener("change",()=>loadIdx(+sel.value));
+  document.querySelector(".sub").textContent=`live from Shape.dat · ${toc.length} meshes (shp.js)`;
+  resize(); loadIdx(start); loop();
+}
+// fall back to the pre-exported JSON (python run.py) if /game/ isn't served
+function initJSON(){
+  fetch("shapes/index.json").then(r=>r.json()).then(list=>{
+    const items=list.map(e=>typeof e==="string"?{id:e,name:e,v:0,t:0}:e);
+    const ids=items.map(e=>e.id);
+    const sel=document.getElementById("sel");
+    sel.innerHTML=items.map(e=>`<option value="${e.id}">${e.name}${e.t?`  (${e.t} tris)`:""}</option>`).join("");
+    let start=ids.includes("ALIEN_GIRL")?"ALIEN_GIRL":ids[0];
+    try{const s=localStorage.getItem("axshape"); if(s&&ids.includes(s))start=s;}catch(e){}
+    sel.value=start; sel.addEventListener("change",()=>load(sel.value));
+    document.querySelector(".sub").textContent=`real geometry from Shape.dat · ${items.length} meshes`;
+    resize(); load(start); loop();
+  }).catch(err=>{ resize(); hud.textContent="Run `python run.py` first."; });
+}
+fetch("/game/Data/Shape.dat",{method:"HEAD"}).then(r=>{ if(r.ok&&window.AXISShape) initLive(); else initJSON(); }).catch(initJSON);
 </script>
 </body>
 </html>
