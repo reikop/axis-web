@@ -739,6 +739,32 @@ the render layer, not physics), the force/knockback application, and the per-wea
 (run-time data). The other entity categories (`FUN_00475890`, `FUN_0048f8d0`) and the actor movement
 build the same way.
 
+**Entity type A = `FUN_00475890` (effect / debris), reconstructed + verified (2026-10-16).** This is
+the body dispatched by `FUN_00478f10` (count `0x20f2da0`, array `0x20a99c4`, stride `0x12c`), and it
+is *not* combat physics: it drives **timed visual entities** (muzzle flashes, explosions, sparks,
+gravity-thrown debris). Record slots touched: `+0x74` age, `+0x70` lifetime (despawn via
+`FUN_00478e70` once `lifetime < age`), `+0x08` effect type, `+0x7c` drawn intensity, `+0x10/0x1c`
+pos/vel (type 9), `+0x84` trail timer, `+0x2c` cached model-view matrix. Two behaviours are pure
+math / kinematics and so **verifiable offline**, and are now reconstructed as clean original C in
+`port/sim/axis_effect.c`:
+- *Intensity curve* `intensity = (1 - t)^2 · K(type)`, `t = clamp(age/lifetime, 0..1)`, with the
+  per-type magnitude table read from the `switch(type/5)` ladder: `2`→3000, `3`→5000, `0x19/0x1a`→2000,
+  `0x1e/0x1f`→1000, `0x20..0x22`→1500, `0x23`→5000, `0x24`→3000, `0x25/0x26`→1500; all other types
+  (including the type-9 debris) have no curve (the binary leaves `+0x7c` untouched).
+- *Type-9 gravity debris* — a ballistic step: `pos += dt·vel`, and the vertical axis additionally
+  sinks `dt·G` with **G = 2000** (the decompile literal); velocity is *not* re-integrated, so the fall
+  is at the constant rate `vel.y − G` (reproduced faithfully, not "fixed" to a parabola). A pluggable
+  collision test sticks the debris at an impact point and collapses lifetime to the current age (full
+  fade). A trail timer fires every **0.1 s** (`0x3dcccccd`); each firing draws one value from the
+  shared determinism pool (`DAT_00a11bc8[DAT_00a20488++ & 0xfff]`, SPEC §5) and emits trail kind 2 when
+  `value % 10 == 0`, else kind 0 (kind 2 resets the fade).
+`port/sim/axis_effect_test.c` (native `cc`, ALL PASS; also `emcc`-clean) checks the identities: curve
+= K at t=0 / 0 at t=1 / non-increasing / `(1-t)^2·K` / 0 outside the table; debris free flight advances
+`N·dt·vel` horizontally and `N·dt·(vel.y−G)` vertically; expiry past lifetime; ground-plane collision
+sticks it; trail cadence ≈ 10 emissions / s; and over 100 000 draws of the verified MSVC `srand(1)`
+pool the kind-2 fraction is ≈ 1/10. So type A is a **finished verified layer**; the collision test it
+plugs into is the shared `FUN_00470bc0` map-geometry subsystem (still open, needs the collision mesh).
+
 **Two hard constraints on finishing the per-entity physics** (`FUN_00479750` et al.):
 1. *No offline ground-truth* — replays carry player state only (above).
 2. *x87 80-bit intermediates* — the decompile shows `float10` (x87 extended precision) temporaries in
