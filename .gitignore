@@ -30,6 +30,7 @@
 /web/maps/
 /web/shapes/
 /web/skeletons/
+/web/replays/
 /web/textures/
 *.gltf
 *.glb

@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AXIS Match Replay</title>
+<style>
+  :root{ --bg:#0e1420; --panel:#151d2c; --panel2:#1b2638; --line:#263349;
+    --fg:#e6edf6; --muted:#8aa0bd; --accent:#38d0c8;
+    --p0:#5bc8f5; --p1:#f5a65b; --p2:#9be35b; --p3:#e35bd0;
+    --mono:ui-monospace,"Cascadia Code",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif; color-scheme:dark; }
+  @media (prefers-color-scheme:light){ :root{ --bg:#eef2f7; --panel:#fff; --panel2:#f4f7fb;
+    --line:#d6deea; --fg:#172031; --muted:#5b6b85; --accent:#0e8f88; color-scheme:light; } }
+  *{box-sizing:border-box} html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 var(--sans);overflow:hidden}
+  .wrap{display:grid;grid-template-columns:260px 1fr;height:100%}
+  @media (max-width:720px){ .wrap{grid-template-columns:1fr;grid-template-rows:auto 1fr} }
+  .side{border-right:1px solid var(--line);background:var(--panel);overflow:auto;
+    padding:14px max(14px,env(safe-area-inset-left)) 20px 14px;display:flex;flex-direction:column;gap:14px}
+  h1{font:600 15px/1.2 var(--sans);margin:0} h1 span{color:var(--accent)}
+  .sub{color:var(--muted);font-size:12px;margin-top:-6px}
+  label{font:600 11px/1 var(--sans);text-transform:uppercase;letter-spacing:.1em;color:var(--muted);display:block;margin-bottom:6px}
+  select{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:8px 10px;font:13px/1 var(--mono)}
+  .players{display:flex;flex-direction:column;gap:6px}
+  .pl{display:flex;align-items:center;gap:8px;font:12px/1.3 var(--mono)}
+  .sw{width:11px;height:11px;border-radius:50%;flex:0 0 auto}
+  .hint{color:var(--muted);font-size:11px;line-height:1.5}
+  a{color:var(--accent)}
+  .view{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column}
+  canvas{display:block;width:100%;flex:1;touch-action:none;cursor:grab}
+  canvas:active{cursor:grabbing}
+  .hud{position:absolute;left:12px;top:12px;font:12px/1.4 var(--mono);color:var(--muted);
+    background:color-mix(in srgb,var(--panel) 80%,transparent);padding:6px 9px;border-radius:7px;border:1px solid var(--line);pointer-events:none}
+  .bar{display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--line);background:var(--panel)}
+  button{background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:7px;padding:6px 12px;font:600 12px var(--sans);cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  input[type=range]{flex:1;accent-color:var(--accent)}
+  .t{font:12px/1 var(--mono);color:var(--muted);min-width:118px;text-align:right}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <aside class="side">
+    <div><h1>AXIS <span>Match Replay</span></h1><div class="sub">recorded games from AutoPlay/*.ape</div></div>
+    <div><label for="sel">Replay</label><select id="sel"></select></div>
+    <div><label>Players</label><div class="players" id="players"></div></div>
+    <label class="hint" style="display:flex;gap:8px;align-items:center;text-transform:none;letter-spacing:0">
+      <input type="checkbox" id="trails" checked> movement trails</label>
+    <div class="hint">Each `.ape` is a recorded match. Player positions come from the game's
+      per-tick type-0 state packets (SPEC §4), decoded in-browser by <code>ape.js</code>.
+      Drag to orbit · wheel to zoom.</div>
+    <div class="hint"><a href="map.html">← map viewer</a> · <a href="home.html">home →</a></div>
+  </aside>
+  <div class="view">
+    <canvas id="c"></canvas>
+    <div class="hud" id="hud"></div>
+    <div class="bar">
+      <button id="play">⏸ Pause</button>
+      <input type="range" id="seek" min="0" max="1000" value="0">
+      <span class="t" id="time">0 / 0</span>
+    </div>
+  </div>
+</div>
+<script src="ape.js"></script>
+<script>
+const cv=document.getElementById("c"),ctx=cv.getContext("2d"),hud=document.getElementById("hud");
+const COLORS=["--p0","--p1","--p2","--p3"];
+let DPR=Math.min(devicePixelRatio||1,2);
+let R=null, actors=[], t0=0, t1=1, T=0, playing=true, trails=true;
+let center=[0,0,0], ext=1, yaw=0.7, pitch=0.5, dist=2.6, raf=0;
+
+function resize(){DPR=Math.min(devicePixelRatio||1,2);cv.width=cv.clientWidth*DPR;cv.height=cv.clientHeight*DPR;}
+addEventListener("resize",()=>{resize();draw();});
+
+function rot(p){
+  let x=p[0]-center[0],y=p[1]-center[1],z=p[2]-center[2];
+  const cy=Math.cos(yaw),sy=Math.sin(yaw); let x1=x*cy+z*sy,z1=-x*sy+z*cy;
+  const cp=Math.cos(pitch),sp=Math.sin(pitch); let y2=y*cp-z1*sp,z2=y*sp+z1*cp;
+  return [x1,y2,z2];
+}
+function proj(r){ const depth=r[2]+ext*dist; if(depth<=1)return null;
+  const f=Math.min(cv.width,cv.height)*0.9; return [cv.width/2+r[0]*f/depth, cv.height/2-r[1]*f/depth, depth]; }
+
+// position of an actor at tick t (linear interp between recorded samples)
+function posAt(track,t){
+  if(!track.length) return null;
+  if(t<=track[0][0]) return [track[0][1],track[0][2],track[0][3]];
+  if(t>=track[track.length-1][0]) { const l=track[track.length-1]; return [l[1],l[2],l[3]]; }
+  let lo=0,hi=track.length-1;
+  while(hi-lo>1){ const m=(lo+hi)>>1; if(track[m][0]<=t) lo=m; else hi=m; }
+  const a=track[lo],b=track[hi]; const u=(t-a[0])/((b[0]-a[0])||1);
+  return [a[1]+(b[1]-a[1])*u, a[2]+(b[2]-a[2])*u, a[3]+(b[3]-a[3])*u];
+}
+
+function draw(){
+  const css=getComputedStyle(document.documentElement);
+  ctx.fillStyle=css.getPropertyValue("--bg"); ctx.fillRect(0,0,cv.width,cv.height);
+  if(!R) return;
+  // ground grid at y=center.y
+  const gy=center[1]-ext*0.0, N=10, step=ext/N;
+  ctx.strokeStyle=css.getPropertyValue("--line").trim(); ctx.lineWidth=DPR; ctx.globalAlpha=0.5;
+  for(let i=-N;i<=N;i++){
+    const a=proj(rot([center[0]+i*step, center[1], center[2]-ext])),
+          b=proj(rot([center[0]+i*step, center[1], center[2]+ext]));
+    if(a&&b){ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();}
+    const c=proj(rot([center[0]-ext, center[1], center[2]+i*step])),
+          d=proj(rot([center[0]+ext, center[1], center[2]+i*step]));
+    if(c&&d){ctx.beginPath();ctx.moveTo(c[0],c[1]);ctx.lineTo(d[0],d[1]);ctx.stroke();}
+  }
+  ctx.globalAlpha=1;
+  // each actor
+  for(const a of actors){
+    const col=css.getPropertyValue(COLORS[a.idx%COLORS.length]).trim();
+    if(trails){
+      ctx.strokeStyle=col; ctx.globalAlpha=0.35; ctx.lineWidth=1.5*DPR; ctx.beginPath();
+      let started=false;
+      for(const s of a.track){ if(s[0]>T) break;
+        const sp=proj(rot([s[1],s[2],s[3]])); if(!sp){started=false;continue;}
+        if(started) ctx.lineTo(sp[0],sp[1]); else {ctx.moveTo(sp[0],sp[1]);started=true;} }
+      ctx.stroke(); ctx.globalAlpha=1;
+    }
+    const p=posAt(a.track,T); if(!p) continue;
+    const sp=proj(rot(p)); if(!sp) continue;
+    ctx.fillStyle=col; ctx.beginPath(); ctx.arc(sp[0],sp[1],6*DPR,0,7); ctx.fill();
+    ctx.strokeStyle=css.getPropertyValue("--bg").trim(); ctx.lineWidth=1.5*DPR; ctx.stroke();
+    ctx.fillStyle=css.getPropertyValue("--fg").trim(); ctx.font=`${12*DPR}px var(--mono),monospace`;
+    ctx.fillText(a.name,sp[0]+9*DPR,sp[1]-7*DPR);
+  }
+  const pct=((T-t0)/((t1-t0)||1)*100)|0;
+  hud.textContent=`${R.names?Object.keys(R.tracks).length:0} players · tick ${T|0} · ${pct}%`;
+}
+
+function tickLoop(){
+  if(playing && R){ T+=(t1-t0)/600; if(T>t1){T=t0;}
+    document.getElementById("seek").value=((T-t0)/((t1-t0)||1)*1000)|0;
+    document.getElementById("time").textContent=`${(T-t0)|0} / ${(t1-t0)|0}`;
+    draw();
+  }
+  raf=requestAnimationFrame(tickLoop);
+}
+
+function fit(){
+  const mn=[1e9,1e9,1e9],mx=[-1e9,-1e9,-1e9];
+  for(const a of actors)for(const s of a.track)for(let k=0;k<3;k++){
+    mn[k]=Math.min(mn[k],s[k+1]);mx[k]=Math.max(mx[k],s[k+1]);}
+  center=[(mn[0]+mx[0])/2,(mn[1]+mx[1])/2,(mn[2]+mx[2])/2];
+  ext=Math.max(1,Math.max(mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2]));
+}
+
+function load(rep){
+  R=rep;
+  const tracks=rep.tracks, names=rep.names||{};
+  actors=Object.keys(tracks).map(k=>({idx:+k, name:names[k]||("actor "+k),
+    track:tracks[k].slice().sort((a,b)=>a[0]-b[0])}))
+    .filter(a=>a.track.length>1);
+  let lo=1e18,hi=-1e18;
+  for(const a of actors){ lo=Math.min(lo,a.track[0][0]); hi=Math.max(hi,a.track[a.track.length-1][0]); }
+  t0=lo; t1=hi; T=t0;
+  fit();
+  const css=getComputedStyle(document.documentElement);
+  document.getElementById("players").innerHTML=actors.map(a=>
+    `<div class="pl"><span class="sw" style="background:${css.getPropertyValue(COLORS[a.idx%COLORS.length]).trim()}"></span>${a.name} <span style="color:var(--muted)">· ${a.track.length}</span></div>`).join("");
+  resize(); draw();
+}
+
+// controls
+document.getElementById("play").addEventListener("click",e=>{playing=!playing;e.target.textContent=playing?"⏸ Pause":"▶ Play";});
+document.getElementById("seek").addEventListener("input",e=>{T=t0+(t1-t0)*e.target.value/1000;draw();});
+document.getElementById("trails").addEventListener("change",e=>{trails=e.target.checked;draw();});
+let drag=null;
+cv.addEventListener("pointerdown",e=>{drag={x:e.clientX,y:e.clientY};cv.setPointerCapture(e.pointerId);});
+cv.addEventListener("pointermove",e=>{ if(!drag)return; yaw-=(e.clientX-drag.x)*0.01;
+  pitch=Math.max(-1.4,Math.min(1.4,pitch+(e.clientY-drag.y)*0.01)); drag.x=e.clientX;drag.y=e.clientY; draw(); });
+cv.addEventListener("pointerup",()=>drag=null);
+cv.addEventListener("wheel",e=>{e.preventDefault();dist=Math.max(0.6,Math.min(8,dist*(e.deltaY>0?1.1:0.9)));draw();},{passive:false});
+
+// Live mode: decode replays in-browser from the user's AutoPlay/*.ape (ape.js).
+const CANDIDATES=["Autoplay001.ape","Autoplay002.ape","Autoplay003.ape","Test.ape"];
+async function initLive(){
+  const sel=document.getElementById("sel"); const found=[];
+  for(const f of CANDIDATES){
+    try{ const r=await fetch("/game/AutoPlay/"+f,{method:"HEAD"}); if(r.ok) found.push(f); }catch(e){}
+  }
+  if(!found.length) return initJSON();
+  sel.innerHTML=found.map(f=>`<option value="${f}">${f}</option>`).join("");
+  async function loadFile(f){
+    const ab=await (await fetch("/game/AutoPlay/"+f)).arrayBuffer();
+    load(window.AXISReplay.parseReplay(ab));
+  }
+  sel.addEventListener("change",()=>loadFile(sel.value));
+  document.querySelector(".sub").textContent="live from AutoPlay/*.ape · ape.js";
+  loadFile(found[0]); tickLoop();
+}
+function initJSON(){
+  fetch("replays/index.json").then(r=>r.json()).then(list=>{
+    const sel=document.getElementById("sel");
+    sel.innerHTML=list.map((e,i)=>`<option value="${i}">${e.name}</option>`).join("");
+    function loadIdx(i){ fetch("replays/"+list[i].file).then(r=>r.json()).then(load); }
+    sel.addEventListener("change",()=>loadIdx(+sel.value));
+    document.querySelector(".sub").textContent=`recorded matches · ${list.length} replays`;
+    loadIdx(0); tickLoop();
+  }).catch(()=>{ resize(); hud.textContent="Run `python run.py` first."; });
+}
+fetch("/game/AutoPlay/Autoplay001.ape",{method:"HEAD"}).then(r=>{ if(r.ok&&window.AXISReplay) initLive(); else initJSON(); }).catch(initJSON);
+</script>
+</body>
+</html>

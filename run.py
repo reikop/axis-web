@@ -86,6 +86,29 @@ def main():
                          os.path.join(HERE, "tools", "parse_skeleton.py"),
                          skel_dat, os.path.join(WEB, "skeletons")])
 
+    # export recorded match replays (AutoPlay/*.ape) for the replay viewer
+    ap_dir = os.path.join(game, "AutoPlay")
+    if os.path.isdir(ap_dir):
+        import json
+        rep_dir = os.path.join(WEB, "replays")
+        os.makedirs(rep_dir, exist_ok=True)
+        rindex = []
+        for fn in sorted(os.listdir(ap_dir)):
+            if not fn.lower().endswith(".ape"):
+                continue
+            base = os.path.splitext(fn)[0]
+            rc = subprocess.call([sys.executable, "-I",
+                                  os.path.join(HERE, "tools", "parse_ape.py"),
+                                  os.path.join(ap_dir, fn),
+                                  os.path.join(rep_dir, base + ".json")],
+                                 stdout=subprocess.DEVNULL)
+            if rc == 0:
+                rindex.append({"name": base, "file": base + ".json"})
+        if rindex:
+            with open(os.path.join(rep_dir, "index.json"), "w", encoding="utf-8") as f:
+                json.dump(rindex, f)
+            print(f"replays  : {len(rindex)} recorded matches -> web/replays/")
+
     # decode textures (PTX -> PNG) for the gallery
     if os.path.isfile(os.path.join(game, "AXIS.EXE")):
         subprocess.call([sys.executable, "-I",

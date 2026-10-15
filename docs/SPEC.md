@@ -440,14 +440,31 @@ with verified keyframe playback + that skin binding the meshes can be deformed a
    | 43  | u8   | RNG stream selector (`counter % 5`) |
    | 44..55 | | RNG sync block — 5 draws from the shared table `DAT_00a11bc8[0x1000]` (idx `DAT_00a20488`) |
 
-   **Architecture finding (verified): input-based deterministic lockstep.** The four
-   floats are small **normalised values (0..1), never world coordinates** (maps span ±1e4+),
-   and every action packet carries RNG samples from a shared table. So peers exchange control
-   **inputs + action bits + RNG draws** and each runs the *identical deterministic simulation*
-   — positions are simulated locally, not replicated. (This is why no fixed payload offset
-   holds a world XY/Z: there isn't one.) Consequence for the port: faithful online play needs
-   the deterministic sim (the same code the WASM build reconstructs); our `server/relay.js`
-   instead shares positions directly as a pragmatic browser substitute.
+   The type-1 packet's four floats are small **normalised values (0..1)** (per-tick control
+   inputs / aim), not world coordinates, and it also carries RNG samples from a shared table.
+
+   **Packet-type catalogue (three builders decoded, VALIDATED on all replays):**
+   * **Type 0** — `FUN_0048d750`, the per-tick **STATE SNAPSHOT** and ~96% of all traffic:
+     `[4]` = `(actor<<4)|mode` (so **actor = `[4]>>4`**), `[5]/[7]/[9]` = **int16 quantised
+     world position x,y,z** (`__ftol` of the float coords), `[0xb..0x12]` orientation/velocity
+     /weapon-fire flag bytes, then five 9-byte weapon/turret sub-records (flags + target id +
+     3 aim shorts). **Verified: consecutive `[5]/[7]/[9]` samples form smooth world-scale
+     trajectories** (e.g. actor 2: (931,−897,−5424)→(760,−854,−5415)→(675,−830,−5410)…).
+   * **Type 1** — `FUN_0048d080`, player **INPUT/action event** (table above): normalised
+     input axes + action/fire bitmasks + RNG sync block.
+   * **Type 2** — `FUN_0048d580`, player **IDENTITY/loadout**: name string `[2..18]`, actor
+     `[22]`, ~11 equipment ids `[23..33]` (+1 encoded), 20-byte stat/appearance block. (Real
+     handles recovered from the replays: "OneShotOneKill", "onlynike", "efreet", "k'".)
+   * **Type 12** — session/control (rare).
+
+   **Architecture (corrected — this supersedes an earlier note that called it pure lockstep):**
+   AXIS **replicates state**: each actor's quantised world position + weapon state is broadcast
+   every tick (type 0). Control inputs and an RNG sync stream (type 1) ride on top for
+   hit/damage determinism and anti-cheat, not full-simulation lockstep. The earlier "positions
+   are never on the wire" reading was based on the type-1 packet alone; the dominant type-0
+   packet does carry them, so **recorded movement is directly recoverable from a replay**.
+   Consequence for the port: `server/relay.js`'s position-sharing model matches the original's
+   type-0 state broadcast; recorded `.ape` matches can be replayed in the browser from type-0.
 
    **Key link:** the same 64-byte payload is also written to `AutoPlay\*.ape` via the
    encrypted write `FUN_0046c0b0` — so **`.ape` replays are recorded packet streams**

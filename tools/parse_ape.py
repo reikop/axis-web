@@ -1,42 +1,37 @@
 #!/usr/bin/env python3
-"""Decode an AXIS AutoPlay replay (.ape) into its packet stream.
+"""Decode an AXIS AutoPlay replay (.ape) into per-actor movement + events.
 
 A `.ape` is an encrypted (§2.3) stream of 76-byte records written by the replay
 logger `FUN_0046c0b0`:  `[u32 tick][u32 arg][u32 0x40][64-byte payload]` — the
-payload is exactly the 64-byte network packet the game sends (SPEC §4).
+payload is exactly the 64-byte network packet the game sends (SPEC §4). Packet
+type is `payload[1]`; the three builders decoded so far:
 
-Player-action packet layout, decoded authoritatively from the builder
-`FUN_0048d080` and VALIDATED against this replay (see docs/SPEC.md §4):
+  TYPE 0  (builder FUN_0048d750) -- per-tick STATE SNAPSHOT, ~96% of traffic.
+      [1]=0
+      [4]      packed = (actor<<4) | mode/flags     -> actor = [4] >> 4
+      [5],[7],[9]  int16  quantized WORLD position x,y,z  (float->int via __ftol)
+      [0xb..0x12]  orientation / velocity / weapon-fire flag bytes
+      [0x13..0x3f] five 9-byte weapon/turret sub-records
+                   (flags + target id + 3 aim shorts each)
+      -> VERIFIED: consecutive samples form smooth world-scale trajectories.
+  TYPE 1  (FUN_0048d080) -- player INPUT/action event: normalised input axes
+      ([17]/[21] f32, 0..1), action/fire bitmasks ([25]/[29] u16), and an RNG
+      sync block ([43..55], shared table) for hit/damage determinism.
+  TYPE 2  (FUN_0048d580) -- player IDENTITY/loadout: name string ([2..18]),
+      actor ([22]), ~11 equipment ids ([23..33], +1 encoded), 20-byte stat block.
+  TYPE 12 -- session/control (rare).
 
-    [0]      (leading byte)
-    [1] = 1  packet type  (1 = player action)
-    [2]      actor id (0..15)
-    [3..8]   appearance / colour bytes (0xFF while the slot is inactive)
-    [9..12]  f32  global aim/view A      (from 0x22f0408)
-    [13..16] f32  global aim/view B      (from 0x22f040c)   -- varies 0..1
-    [17..20] f32  per-actor input A      (0x1eccb6c + actor*0x8888)
-    [21..24] f32  per-actor input B      (0x1eccb70 + actor*0x8888) -- varies 0..1
-    [25..26] u16  action/fire bitmask 1  (one bit per 0..15 channel)
-    [29..30] u16  action/fire bitmask 2
-    [33..42] aim/angle shorts
-    [43]     RNG stream selector (counter % 5)
-    [44..55] RNG sync block  (5 draws from the shared table DAT_00a11bc8)
-
-KEY FINDING: the four floats are small NORMALISED values (0..1), never world
-coordinates (maps span tens of thousands of units). AXIS multiplayer is therefore
-**input-based deterministic lockstep**: packets carry control inputs + action
-bits + RNG samples so every peer runs the identical deterministic simulation —
-not replicated positions. So a replay's absolute motion can only be recovered by
-running that simulation, not by reading coordinates out of the packets.
+So movement IS replicated (type 0 positions), with input+RNG events (type 1)
+layered on top — a state-replication model, not pure lockstep.
 
     python -I parse_ape.py <file.ape> [out.json]
 """
 import sys
 import struct
-import math
 
 REC = 76
-PAY = 12          # payload offset within a record
+PAY = 12
+POS_SCALE = 1.0          # type-0 coords are already world units (int16)
 
 
 def _dec(b):
@@ -54,15 +49,10 @@ def decrypt(raw):
 
 
 def find_start(plain):
-    # lock the record grid: first offset where 3 consecutive records hold 0x40
     for o in range(0, min(len(plain), 4096)):
-        ok = True
-        for k in range(3):
-            b = o + k * REC
-            if b + REC > len(plain) or struct.unpack_from("<I", plain, b + 8)[0] != 0x40:
-                ok = False
-                break
-        if ok:
+        if all(o + k * REC + REC <= len(plain) and
+               struct.unpack_from("<I", plain, o + k * REC + 8)[0] == 0x40
+               for k in range(3)):
             return o
     return None
 
@@ -71,9 +61,8 @@ def parse(raw):
     plain = decrypt(raw)
     start = find_start(plain)
     if start is None:
-        return {"records": 0, "types": {}, "actors": {}}
-    types = {}
-    actors = {}
+        return {"records": 0, "types": {}, "tracks": {}, "names": {}}
+    types, tracks, names = {}, {}, {}
     nrec = 0
     o = start
     while o + REC <= len(plain):
@@ -82,17 +71,23 @@ def parse(raw):
         tick = struct.unpack_from("<I", plain, o)[0]
         pay = plain[o + PAY:o + PAY + 64]
         nrec += 1
-        ptype = pay[1]
-        types[ptype] = types.get(ptype, 0) + 1
-        if ptype == 1 and pay[2] < 16:
-            a = pay[2]
-            inA, inB = struct.unpack_from("<ff", pay, 17)      # per-actor input vector
-            m1, m2 = struct.unpack_from("<HH", pay, 25)         # action/fire bitmasks
-            if all(map(math.isfinite, (inA, inB))):
-                actors.setdefault(a, []).append(
-                    {"tick": tick, "in": [round(inA, 3), round(inB, 3)], "act": [m1, m2]})
+        t = pay[1]
+        types[t] = types.get(t, 0) + 1
+        if t == 0:                                   # state snapshot -> trajectory
+            actor = pay[4] >> 4
+            x, y, z = struct.unpack_from("<hhh", pay, 5)
+            tracks.setdefault(actor, []).append([tick, x, y, z])
+        elif t == 2:                                 # identity -> name
+            raw_name = pay[2:19].split(b"\x00")[0]
+            try:
+                nm = raw_name.decode("cp949", "replace")
+            except Exception:
+                nm = ""
+            if nm:
+                names[pay[22] if pay[22] < 16 else 0] = nm
         o += REC
-    return {"records": nrec, "start": start, "types": types, "actors": actors}
+    return {"records": nrec, "start": start, "types": types,
+            "tracks": tracks, "names": names}
 
 
 def main():
@@ -103,11 +98,16 @@ def main():
     r = parse(raw)
     print(f"records={r['records']} start={r.get('start')}")
     print(f"packet types (payload[1]): {dict(sorted(r['types'].items()))}  "
-          f"[0=idle 1=player-action 2=event 12=session]")
-    for a in sorted(r["actors"]):
-        s = r["actors"][a]
-        acts = sum(1 for e in s if e["act"][0] or e["act"][1])
-        print(f"  actor {a}: {len(s)} action packets, {acts} with action bits set")
+          f"[0=state/pos 1=input 2=identity 12=session]")
+    if r["names"]:
+        print(f"names: {r['names']}")
+    for a in sorted(r["tracks"]):
+        pts = r["tracks"][a]
+        xs = [p[1] for p in pts]
+        ys = [p[2] for p in pts]
+        zs = [p[3] for p in pts]
+        print(f"  actor {a}: {len(pts):4d} positions  "
+              f"x[{min(xs):6d},{max(xs):6d}] y[{min(ys):6d},{max(ys):6d}] z[{min(zs):6d},{max(zs):6d}]")
     if len(sys.argv) > 2:
         import json
         json.dump(r, open(sys.argv[2], "w"))
