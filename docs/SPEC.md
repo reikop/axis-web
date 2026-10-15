@@ -823,6 +823,28 @@ segment→local→AABB cull) feeding narrow phase (`axis_collide.c`, seg–trian
 it is the per-map collision geometry (the prop AABBs + meshes), which is runtime map data, and actor
 (player/mech) movement physics — the two genuinely offline-unverifiable pieces (SPEC §5 ceiling).
 
+**Item / ammo pickup = `FUN_0048e220`, reconstructed + verified (2026-10-16).** The fourth per-tick
+dispatcher turns out to be the item-pickup system (not actor movement): it walks the item entities (the
+`0x8888`-stride entity blocks, active flag = the denormal `0x00000001`) and, for every actor within a
+box reach of an item, adds the item's quantity to the matching inventory slot capped at the slot max,
+then consumes the item. The reach is the item radius × **1.5** (per-axis `|delta| < radius*1.5` on x/y/z).
+The item table comes straight from the `switch(type/10)`/`switch(type%10)` ladder and its `"%d <NAME>"`
+strings: id0 `1 30MM CELL`(+1), id1 `40 30MM CELLS`(+40)→30MM; id2 `40 60MM CELLS`→60MM; id3
+`40 E PACK CELLS`→E-PACK; id4 `15 MISSILE CELLS`(+15)/id5 `5 MISSILE CELLS`(+5)→MISSILE; id10..14
+`10/25/50/100/100 EXTENDED ARMOR`→ARMOR; id15..19 `10/25/50/100/100 EXTENDED SHIELD`→SHIELD; id≥20
+powerups (`DAMAGE_AMP`/`CLOAKING_FIELD`/`OVERED_BOOSTER`/`WARP_ZONE`/`GRAVITY_ARMOR`, instant effects,
+no counted quantity). The proximity test and the capped add are pure, reconstructed as clean original C
+in `port/sim/axis_pickup.c`: `axis_pickup_in_range` (box test, reach×1.5), `axis_pickup_add` (capped
+add), `axis_pickup_amount`/`axis_pickup_slot` (the decoded table), and `axis_pickup_try` (resolve one
+pickup). `port/sim/axis_pickup_test.c` (native `cc`, ALL PASS; `emcc`-clean) verifies the box boundary
+(in at the item, in just inside reach×1.5, out just beyond, out if any axis is beyond), the capped add
+(sum below cap, clamp over, stay at cap), the full amount+slot table, and that `axis_pickup_try` grants
+only in range and respects the cap. So all four per-tick dispatchers are now accounted for: type-A
+effects (`axis_effect`), projectiles (`axis_proj`/`axis_tick`), type-C props (`axis_prop`), and item
+pickups (`axis_pickup`); plus the shared collision broad/narrow phases. The only per-tick logic not
+reconstructed is the authoritative actor input→acceleration transfer (server-side, no offline ground
+truth; the client-side motion is the verified const-velocity dead-reckoning of §5).
+
 **Two hard constraints on finishing the per-entity physics** (`FUN_00479750` et al.):
 1. *No offline ground-truth* — replays carry player state only (above).
 2. *x87 80-bit intermediates* — the decompile shows `float10` (x87 extended precision) temporaries in
