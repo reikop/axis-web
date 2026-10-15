@@ -55,7 +55,7 @@ async function main() {
   const decrypt = F('axis_decrypt'), encrypt = F('axis_encrypt'),
         decodeState = F('axis_decode_state'), encodeState = F('axis_encode_state'),
         rngFill = F('axis_rng_fill'), shpParse = F('axis_shp_parse'), bfdExtract = F('axis_bfd_extract'),
-        ptxDecode = F('axis_ptx_decode'), skelParse = F('axis_skel_parse');
+        ptxDecode = F('axis_ptx_decode'), skelParse = F('axis_skel_parse'), apeParse = F('axis_ape_parse');
   for (const [n, f] of [['axis_decrypt', decrypt], ['axis_encrypt', encrypt], ['axis_decode_state', decodeState], ['axis_encode_state', encodeState], ['axis_rng_fill', rngFill]])
     if (typeof f !== 'function') { console.error('missing export', n); process.exit(1); }
 
@@ -344,6 +344,54 @@ async function main() {
         if (why) { bad++; firstBad = firstBad || `${e.name}: ${why}`; } else ok++;
       }
       console.log(`\nskeleton decode: ${ok}/${list.length} rigs byte-identical to web/skel.js (parent+translation+axis-angle)${bad ? `, ${bad} MISMATCH` : ''}`);
+      if (firstBad) console.log(`  first mismatch: ${firstBad}`);
+      fails += bad;
+    }
+  }
+
+  // ---- axis_ape_parse: WASM replay decoder vs web/ape.js over every AutoPlay/*.ape
+  const apDir2 = path.join(game, 'AutoPlay');
+  if (typeof apeParse === 'function' && fs.existsSync(apDir2)) {
+    let AP;
+    try { AP = require(path.join(__dirname, '..', '..', 'web', 'ape.js')); }
+    catch (e) { console.log('ape.js not loadable — skipping replay check:', e.message); AP = null; }
+    if (AP) {
+      const AF = BASE, ROW = 0x1400000, YAW = 0x1600000, AC = 0x1700000;
+      ensure(AC + 64);
+      let ok = 0, bad = 0, nfiles = 0, firstBad = null;
+      for (const fn of fs.readdirSync(apDir2).filter(f => /\.ape$/i.test(f))) {
+        const raw = fs.readFileSync(path.join(apDir2, fn));
+        const ab = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
+        const js = AP.parseReplay(ab);
+        new Uint8Array(memory.buffer).set(new Uint8Array(ab), AF);
+        apeParse(AF, raw.length, ROW, YAW, AC);
+        const cnt = new Uint32Array(memory.buffer, AC, 3);
+        const nrows = cnt[2];
+        const rows = new Int32Array(memory.buffer, ROW, nrows * 5);
+        const yaws = new Float64Array(memory.buffer, YAW, nrows);
+        nfiles++;
+        // rebuild per-actor tracks from WASM rows (record order) and compare to ape.js tracks
+        const wt = {};
+        for (let r = 0; r < nrows; r++) { const a = rows[r*5]; (wt[a] || (wt[a] = [])).push([rows[r*5+1], rows[r*5+2], rows[r*5+3], rows[r*5+4], yaws[r]]); }
+        let why = null;
+        const jsStart = js.start, wStart = (cnt[0] === 0xffffffff) ? -1 : cnt[0];
+        if (wStart !== jsStart) why = `start ${wStart}!=${jsStart}`;
+        else if (cnt[1] !== js.records) why = `records ${cnt[1]}!=${js.records}`;
+        else {
+          const acts = Object.keys(js.tracks);
+          for (const a of acts) {
+            const jt = js.tracks[a], w = wt[a] || [];
+            if (w.length !== jt.length) { why = `actor ${a} len ${w.length}!=${jt.length}`; break; }
+            for (let i = 0; i < jt.length; i++) {
+              if (w[i][0] !== jt[i][0] || w[i][1] !== jt[i][1] || w[i][2] !== jt[i][2] || w[i][3] !== jt[i][3] || !Object.is(w[i][4], jt[i][4])) { why = `actor ${a} row ${i}`; break; }
+            }
+            if (why) break;
+          }
+          if (!why && Object.keys(wt).length !== acts.length) why = `actor count ${Object.keys(wt).length}!=${acts.length}`;
+        }
+        if (why) { bad++; firstBad = firstBad || `${fn}: ${why}`; } else ok++;
+      }
+      console.log(`\nape replay decode: ${ok}/${nfiles} replays byte-identical to web/ape.js (start+records+all type-0 trajectories)${bad ? `, ${bad} MISMATCH` : ''}`);
       if (firstBad) console.log(`  first mismatch: ${firstBad}`);
       fails += bad;
     }
