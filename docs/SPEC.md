@@ -374,7 +374,10 @@ gallery (§2.2) shows the textures standalone.
    (`local_27`/`local_23`), plus RNG-table "checksum" words (anti-cheat). **Key link:** the
    same 64-byte payload is also written to the `AutoPlay\*.ape` file via the encrypted write
    `FUN_0046c0b0` — so **`.ape` replays are recorded packet streams** (decryptable with
-   §2.3), giving real protocol samples without a live server.
+   §2.3), giving real protocol samples without a live server. **Validated:**
+   `Autoplay001.ape` (539 KB) decrypts whole (version `0x1201`) and contains the per-tick
+   64-byte player records (tick / actor id / payload with position). Decoding a full `.ape`
+   is the practical way to recover the packet semantics for the server reimplementation.
 5. (optional) full PTX block decoder for a standalone PNG extractor — done (`tools/ptx_decode.py`).
 
 See `../port/README.md` for how these feed the approach-B WASM build.
