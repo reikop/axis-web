@@ -20,7 +20,7 @@ fi
 
 emcc engine/axis_engine.c src/axis_shp.c src/axis_ptx.c \
   sim/axis_vecmath.c sim/axis_proj.c sim/axis_target.c sim/axis_collide.c sim/axis_tick.c \
-  sim/axis_effect.c \
+  sim/axis_effect.c sim/axis_broadphase.c \
   -O2 -ffp-contract=off -Isim \
   -s FULL_ES2=1 -s MIN_WEBGL_VERSION=1 -s MAX_WEBGL_VERSION=1 \
   -s MODULARIZE=1 -s EXPORT_NAME=AxisEngine \

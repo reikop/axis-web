@@ -59,6 +59,15 @@ int axis_debris_step(axis_debris_t *d, float dt,
 #define MAXDEBRIS 128
 static axis_debris_t gDebris[MAXDEBRIS];
 static int gDebrisAlive[MAXDEBRIS], gDebrisN = 0;
+
+/* the verified collision layers (axis_broadphase.c broad phase, axis_collide.c
+ * narrow phase) run against the map's real merged triangle soup (POS/TRI), so a
+ * projectile is consumed when it strikes map geometry, not only a target. */
+int axis_seg_aabb(const float *a, const float *b, const float *bmin, const float *bmax, float *tEnter);
+int axis_seg_tri(const float *p0, const float *p1, const float *a, const float *b,
+                 const float *c, float *outT, float *hit);
+static float gMapMin[3] = {0,0,0}, gMapMax[3] = {0,0,0};
+static float gProjPrev[MAXPROJ][3];
 static unsigned gDbgSeed = 1u;   /* cheap deterministic spread for debris velocities */
 static float dbg_rand(void) { gDbgSeed = gDbgSeed * 1103515245u + 12345u; return (float)((gDbgSeed >> 16) & 0x7fff) / 32767.0f; }
 
@@ -232,6 +241,26 @@ static void spawn_debris(const float *at) {
     }
 }
 
+/* Query the reconstructed collision pipeline for a projectile's move segment vs
+ * the map's real geometry: broad phase (segment vs whole-map AABB) then narrow
+ * phase (nearest segment/triangle over the merged soup). Writes the nearest hit
+ * point and returns 1 on a strike. */
+static int proj_hit_map(const float *prev, const float *cur, float *outHit) {
+    if (indexCount <= 0) return 0;
+    float te;
+    if (!axis_seg_aabb(prev, cur, gMapMin, gMapMax, &te)) return 0;   /* broad phase */
+    int nt = indexCount / 3, found = 0; float bestT = 2.0f, t, h[3];
+    for (int i = 0; i < nt; i++) {                                    /* narrow phase */
+        const float *a = &POS[TRI[i*3+0]*3];
+        const float *b = &POS[TRI[i*3+1]*3];
+        const float *c = &POS[TRI[i*3+2]*3];
+        if (axis_seg_tri(prev, cur, a, b, c, &t, h) && t < bestT) {
+            bestT = t; outHit[0] = h[0]; outHit[1] = h[1]; outHit[2] = h[2]; found = 1;
+        }
+    }
+    return found;
+}
+
 /* Demo: run the reconstructed projectile combat sim in the engine — place a ring
  * of targets around the loaded map's centre and fire homing projectiles at them
  * from above. The sim (axis_sim_tick) advances them each frame; the engine draws
@@ -326,7 +355,7 @@ EMSCRIPTEN_KEEPALIVE int engine_load_map(const uint8_t *dat, uint32_t datLen, ui
     float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
     for (uint32_t i = 0; i < mergedV; i++) for (int k = 0; k < 3; k++) { float v = POS[i*3+k]; if (v < lo[k]) lo[k] = v; if (v > hi[k]) hi[k] = v; }
     gRadius = 0.0001f;
-    for (int k = 0; k < 3; k++) { gCenter[k] = 0.5f*(lo[k]+hi[k]); float h = 0.5f*(hi[k]-lo[k]); if (h > gRadius) gRadius = h; }
+    for (int k = 0; k < 3; k++) { gCenter[k] = 0.5f*(lo[k]+hi[k]); float h = 0.5f*(hi[k]-lo[k]); if (h > gRadius) gRadius = h; gMapMin[k] = lo[k]; gMapMax[k] = hi[k]; }
 
     glBindBuffer(GL_ARRAY_BUFFER, vboPos); glBufferData(GL_ARRAY_BUFFER, mergedV*3*sizeof(float), POS, GL_STATIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, vboNrm); glBufferData(GL_ARRAY_BUFFER, mergedV*3*sizeof(float), NRM, GL_STATIC_DRAW);
@@ -453,10 +482,24 @@ static void frame(void) {
         /* reconstructed projectile sim running in the engine (?proj) */
         if (projDemo) {
             float sdt = dt > 0.05f ? 0.05f : dt;      /* clamp hitches so homing can't overshoot */
-            int wasAlive[MAXPROJ]; for (int i = 0; i < gProjN; i++) wasAlive[i] = gProjAlive[i];
+            int wasAlive[MAXPROJ];
+            for (int i = 0; i < gProjN; i++) {
+                wasAlive[i] = gProjAlive[i];
+                if (gProjAlive[i]) { gProjPrev[i][0]=gProjs[i].pos[0]; gProjPrev[i][1]=gProjs[i].pos[1]; gProjPrev[i][2]=gProjs[i].pos[2]; }
+            }
             axis_sim_tick(gProjs, gProjAlive, gProjN, gTgt, gTgtAlive, gTgtN, gTgtForce,
                           gRadius * 0.06f, 1.0f, 0.0f, sdt);
-            /* a projectile that just resolved spawns a burst of gravity debris */
+            /* a projectile still flying that struck map geometry this step is
+               consumed at the impact point (reconstructed collision pipeline) */
+            for (int i = 0; i < gProjN; i++) {
+                if (!gProjAlive[i]) continue;
+                float hp[3];
+                if (proj_hit_map(gProjPrev[i], gProjs[i].pos, hp)) {
+                    gProjs[i].pos[0]=hp[0]; gProjs[i].pos[1]=hp[1]; gProjs[i].pos[2]=hp[2];
+                    gProjAlive[i] = 0;
+                }
+            }
+            /* a projectile that just resolved (target hit or wall hit) spawns debris */
             for (int i = 0; i < gProjN; i++) if (wasAlive[i] && !gProjAlive[i]) spawn_debris(gProjs[i].pos);
             /* advance the debris (verified axis_effect layer); gravity arcs them down */
             for (int i = 0; i < MAXDEBRIS; i++) {
