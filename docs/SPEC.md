@@ -104,6 +104,14 @@ emit(out, w, h, planes)                        # FUN_0046deb0  -> glTexImage2D b
 - `FUN_0046d800` = **dequantize + 8×8 inverse DCT** + place into the plane.
 - `FUN_0046dcb0`/`FUN_0046dd60` = combine planes **YCbCr → RGB/RGBA**.
 
+**Implemented and verified** — `tools/ptx_decode.py` decodes PTX → PNG using the standard
+JPEG zig-zag + luma/chroma quant tables and the two AXIS-specific Huffman tables read at
+run time from the user's own `AXIS.EXE` (quant = `jpegQuant*100/quality`, plain 8×8 IDCT,
+YCbCr→RGBA). Confirmed on real textures: a 64×64 panel decodes to the expected glowing
+injection-port, and a 256×256 UI texture renders crisp readable text and imagery. Per-plane
+full resolution (no chroma subsampling); planes = Y, Cb, Cr (+alpha for fmt 0x82); DC
+predictor resets per plane; blocks are stored in raster-block order.
+
 The zig-zag table @`0x4c6994` is the **standard JPEG zig-zag scan**, verified byte-for-byte:
 `0,1,8,16,9,2,3,10,17,24,32,25,18,11,4,5,12,19,26,33,40,48,41,34,27,20,13,6,7,14,21,28,
 35,42,49,56,57,50,43,36,29,22,15,23,30,37,44,51,58,59,52,45,38,31,39,46,53,60,61,54,47,
