@@ -138,9 +138,44 @@ Per patch (field = int index off the patch pointer `p`):
 | `p[0xe]`,`p[0x11]` | index / strip buffers |
 
 All buffers are bump-allocated into one arena at `this+0xdc0264+...` (cap 4,000,000 B).
-This is a standard renderable heightmap. **Exact .bfd byte order of the header + per-patch
-header still needs the `fread` (FUN_0046c060) argument sizes from the assembly** — the
-decompile shows the sequence but not each field's width.
+This is a standard renderable heightmap.
+
+**Global header byte layout** (read from the assembly; `fread(dest,size,count,file)`):
+
+```
+u32   version  (== 0x1201)
+4 ×   u32      global settings (each post-processed by FUN_0049df7e(file,val))
+u8[256]        name / string block
+u32            field @obj+0xa08
+<sub-struct>   FUN_004831f0(obj+0x9ccffc, file)
+u32, u8[16], u32, u8[16], u32, u32, u32, u32    lighting / sky / fog (16B = colour/vec)
+u32   lightmap-mode @obj+0x9ee064  (==1 or ==2 → load that many named lightmap textures)
+…     ground-texture set (5 names) + 6-tex + 16-tex sets, each loaded via FUN_00456070
+u32   patch_count @obj+0xdc0a74
+patch[patch_count]   (per-patch header read at loop top, then buffers computed)
+```
+
+**Per-patch read** (from assembly): after `u32 patch_count @obj+0xdc0a74`, each patch does
+`fread(dest=obj+0xdc0244, size=0x20C, count=1)` — the **whole 524-byte patch struct in one
+read** — then `fread`s its RGB heightmap block ((W+1)×(H+1)×3 bytes) into a ~197 KB stack
+buffer (function reserves `0x30394` bytes) and converts R(==G==B) to a height byte.
+
+Patch struct (int offsets, struct base = obj+0xdc0244; the first ~0x34 bytes are file data,
+the rest are runtime pointer slots overwritten after load):
+
+```
++0x00 i32 flip        +0x04..0x0c i32 ox,oy,oz (cast to float)
++0x1c i32 H (rows)    +0x20 i32 W (cols)
++0x24 i32 spacing     +0x28 i32 heightScale   +0x2c i32 uvTile
++0x34 … texture id/name fields;  +0x18.. runtime ptrs: height,flag,verts,normals,uv,index
+```
+
+Vertices: `x=col*spacing+ox, y=height*heightScale+oy, z=row*spacing+oz`.
+
+**Still to pin before a byte-exact parser:** bytes consumed by the sub-reader
+`FUN_004831f0(obj+0x9ccffc, file)` in the global header, and whether the 4 early settings
+use `FUN_0049df7e` to transform or just skip. Then write the parser, validate against a real
+`.bfd` (patch_count / W / H sane, whole file consumed), and render in WebGL.
 
 ## 3. Reverse-engineering map (procedures)
 
