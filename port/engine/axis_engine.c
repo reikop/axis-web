@@ -35,6 +35,14 @@ static GLuint vboCube, vboCubeN, iboCube;
 #define MAXAV 16
 static float avatars[MAXAV * 3];
 static int avCount = 0;
+
+/* map mode: per-object triangle ranges + each object's shape, so every placed
+ * object can be drawn with its own SHAPE\<name> skin (texForShape, keyed by the
+ * Shape.dat record index) where one exists, flat otherwise. */
+static int mapMode = 0;
+#define MAXOBJ 4096
+static uint32_t objTriStart[MAXOBJ], objTriCount[MAXOBJ];
+static int objShape[MAXOBJ], objCount = 0;
 static float gCenter[3] = {0, 0, 0}, gRadius = 1.0f;
 
 /* free-fly / first-person camera */
@@ -77,6 +85,7 @@ static uint8_t TOCN[MAXTOC][0x40];
 static int TOCLEN[MAXTOC];
 static uint32_t TOCOFF[MAXTOC], TOCEND[MAXTOC];
 static int tocCount = 0;
+static GLuint texForShape[MAXTOC];   /* per-map-object skin, keyed by Shape.dat index (0 = none) */
 
 static int norm_name(const uint8_t *s, int max, uint8_t *out) {
     int n = 0; while (n < max && s[n]) n++;
@@ -147,7 +156,7 @@ EMSCRIPTEN_KEEPALIVE int engine_load_mesh(const uint8_t *dat, uint32_t len, uint
     glBindBuffer(GL_ARRAY_BUFFER, vboUV);  glBufferData(GL_ARRAY_BUFFER, vc*2*sizeof(float), UVt, GL_STATIC_DRAW);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo); glBufferData(GL_ELEMENT_ARRAY_BUFFER, tc*3*sizeof(uint32_t), TRI, GL_STATIC_DRAW);
     indexCount = (int)(tc * 3);
-    hasUV = 1; hasTex = 0;        /* texture set separately via engine_set_texture */
+    hasUV = 1; hasTex = 0; mapMode = 0;   /* texture set separately via engine_set_texture */
     camInit();
     return (int)CNT[2]; /* group count, as a success signal */
 }
@@ -202,6 +211,8 @@ EMSCRIPTEN_KEEPALIVE int engine_load_map(const uint8_t *dat, uint32_t datLen, ui
     for (uint32_t i = 4; i < bfdLen; i++) { uint8_t x = (uint8_t)(bfd[i] ^ 0x59); bfd[i] = (uint8_t)((x << 1) | (x >> 7)); }
     uint32_t count = (bfdLen >= 12) ? ({ uint32_t c; memcpy(&c, bfd + 8, 4); c; }) : 0;
 
+    for (int t = 0; t < tocCount; t++) texForShape[t] = 0;   /* new map: drop old skins */
+    objCount = 0;
     uint32_t mergedV = 0, mergedT = 0; int placed = 0;
     uint8_t onm[0x88];
     for (uint32_t i = 0; i < count; i++) {
@@ -231,12 +242,15 @@ EMSCRIPTEN_KEEPALIVE int engine_load_map(const uint8_t *dat, uint32_t datLen, ui
             NRM[(mergedV + k) * 3 + 0] = TNRM[k * 3 + 0];
             NRM[(mergedV + k) * 3 + 1] = TNRM[k * 3 + 1];
             NRM[(mergedV + k) * 3 + 2] = TNRM[k * 3 + 2];
+            UVt[(mergedV + k) * 2 + 0] = TUV[k * 2 + 0];
+            UVt[(mergedV + k) * 2 + 1] = TUV[k * 2 + 1];
         }
         for (uint32_t k = 0; k < tc; k++) {
             TRI[(mergedT + k) * 3 + 0] = TTRI[k * 3 + 0] + mergedV;
             TRI[(mergedT + k) * 3 + 1] = TTRI[k * 3 + 1] + mergedV;
             TRI[(mergedT + k) * 3 + 2] = TTRI[k * 3 + 2] + mergedV;
         }
+        if (objCount < MAXOBJ) { objTriStart[objCount] = mergedT; objTriCount[objCount] = tc; objShape[objCount] = j; objCount++; }
         mergedV += vc; mergedT += tc; placed++;
     }
     if (mergedV == 0) return -1;
@@ -248,11 +262,30 @@ EMSCRIPTEN_KEEPALIVE int engine_load_map(const uint8_t *dat, uint32_t datLen, ui
 
     glBindBuffer(GL_ARRAY_BUFFER, vboPos); glBufferData(GL_ARRAY_BUFFER, mergedV*3*sizeof(float), POS, GL_STATIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, vboNrm); glBufferData(GL_ARRAY_BUFFER, mergedV*3*sizeof(float), NRM, GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, vboUV);  glBufferData(GL_ARRAY_BUFFER, mergedV*2*sizeof(float), UVt, GL_STATIC_DRAW);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo); glBufferData(GL_ELEMENT_ARRAY_BUFFER, mergedT*3*sizeof(uint32_t), TRI, GL_STATIC_DRAW);
     indexCount = (int)(mergedT * 3);
-    hasUV = 0; hasTex = 0;        /* map mode: flat shading (per-object skins are a follow-up) */
+    hasUV = 1; hasTex = 0; mapMode = 1;   /* per-object skins applied via engine_map_set_texture */
     camInit();
     return placed;
+}
+
+/* Give a Shape.dat record (by index) its SHAPE\<name> skin for map rendering:
+ * decode the PTX with axis_ptx.c and bind the resulting GL texture to that shape,
+ * so every placed object of that shape draws textured. The page locates the PTX. */
+EMSCRIPTEN_KEEPALIVE int engine_map_set_texture(int tocIndex, const uint8_t *exe, uint32_t exeLen, const uint8_t *ptx, uint32_t ptxLen) {
+    if (tocIndex < 0 || tocIndex >= MAXTOC || ptxLen == 0) return -1;
+    uint32_t wh[2];
+    if (axis_ptx_decode(ptx, ptxLen, exe, exeLen, RGBABUF, wh) != 0) return -2;
+    GLuint t; glGenTextures(1, &t);
+    glBindTexture(GL_TEXTURE_2D, t);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, (GLsizei)wh[0], (GLsizei)wh[1], 0, GL_RGBA, GL_UNSIGNED_BYTE, RGBABUF);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    texForShape[tocIndex] = t;
+    return (int)(wh[0] << 16 | wh[1]);
 }
 
 static void mat_lookat(float *m, const float *eye, const float *ctr, const float *up) {
@@ -313,11 +346,22 @@ static void frame(void) {
             if (hasUV) { glBindBuffer(GL_ARRAY_BUFFER, vboUV); glEnableVertexAttribArray(aUV); glVertexAttribPointer(aUV, 2, GL_FLOAT, GL_FALSE, 0, 0); }
             else glDisableVertexAttribArray(aUV);
         }
-        glUniform1i(glGetUniformLocation(prog, "uHasTex"), hasTex ? 1 : 0);
-        glUniform3f(glGetUniformLocation(prog, "uColor"), 0.30f, 0.55f, 0.85f);
-        if (hasTex) { glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texId); glUniform1i(glGetUniformLocation(prog, "uTex"), 0); }
+        GLint uHasTexL = glGetUniformLocation(prog, "uHasTex"), uTexL = glGetUniformLocation(prog, "uTex"), uColorL = glGetUniformLocation(prog, "uColor");
+        glUniform3f(uColorL, 0.30f, 0.55f, 0.85f);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
-        glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
+        if (mapMode) {
+            /* draw each placed object with its own SHAPE skin where one exists */
+            for (int o = 0; o < objCount; o++) {
+                GLuint t = texForShape[objShape[o]];
+                glUniform1i(uHasTexL, t ? 1 : 0);
+                if (t) { glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, t); glUniform1i(uTexL, 0); }
+                glDrawElements(GL_TRIANGLES, (GLsizei)(objTriCount[o] * 3), GL_UNSIGNED_INT, (const void *)(uintptr_t)(objTriStart[o] * 3 * sizeof(uint32_t)));
+            }
+        } else {
+            glUniform1i(uHasTexL, hasTex ? 1 : 0);
+            if (hasTex) { glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texId); glUniform1i(uTexL, 0); }
+            glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
+        }
 
         /* remote-player avatars: colored cubes at their world positions */
         if (avCount > 0) {

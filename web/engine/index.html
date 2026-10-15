@@ -29,6 +29,7 @@
   <audio id="bgm" src="/game/Music/Netsphere.mp3" loop preload="none"></audio>
 </div>
 <script src="/shp.js"></script>
+<script src="/bfd.js"></script>
 <script src="/crypt.js"></script>
 <script src="axis_engine.js"></script>
 <script>
@@ -96,6 +97,32 @@
         statusEl.textContent = placed >= 0
           ? `rendering map ${mapName} — ${placed} objects placed, meshes decoded by axis_shp.c in WASM, WebGL. (?map=NAME, or ?i=N for one mesh)`
           : `engine_load_map failed (code ${placed}) for ${mapName}`;
+        // per-object map skins: give each placed shape its SHAPE\<name> texture
+        // (decoded by axis_ptx.c in WASM) where one exists; buildings without a
+        // static skin (SPEC §2.9) stay flat.
+        if (placed >= 0) {
+          try {
+            const sab = shape.buffer.slice(shape.byteOffset, shape.byteOffset + shape.byteLength);
+            const stoc = window.AXISShape.readTOC(sab);
+            const byLower = {}; stoc.forEach((e, i) => byLower[e.name.replace(/[\\/]/g, '_').toLowerCase()] = i);
+            const m = window.AXISMap.extractMap(bfd.buffer.slice(bfd.byteOffset, bfd.byteOffset + bfd.byteLength));
+            const want = new Map();
+            for (const o of m.objects) { const id = o.name.replace(/[\\/]/g, '_').toLowerCase(); const ti = byLower[id]; if (ti === undefined) continue; if (!want.has(ti)) want.set(ti, ('SHAPE\\' + stoc[ti].name).toUpperCase()); }
+            if (want.size) {
+              const exe = await fetchU8('/game/AXIS.EXE'); const ep = toWasm(M, exe);
+              const imgs = [];
+              for (let n = 0; n < 6; n++) { try { const img = await fetchU8('/game/Data/Image' + n + '.dat'); imgs.push({ u8: img, toc: window.AXISShape.readTOC(img.buffer.slice(img.byteOffset, img.byteOffset + img.byteLength)) }); } catch (_) {} }
+              let nt = 0;
+              for (const [ti, texname] of want) {
+                let ptx = null;
+                for (const im of imgs) { const e = im.toc.find(t => t.name.toUpperCase() === texname); if (e) { ptx = im.u8.subarray(e.off, e.end); break; } }
+                if (ptx) { const pp = toWasm(M, ptx); const r = M.ccall('engine_map_set_texture', 'number', ['number', 'number', 'number', 'number', 'number'], [ti, ep, exe.length, pp, ptx.length]); M.ccall('engine_free', null, ['number'], [pp]); if (r >= 0) nt++; }
+              }
+              M.ccall('engine_free', null, ['number'], [ep]);
+              statusEl.textContent += ` · ${nt} shape skin(s) textured`;
+            }
+          } catch (e) { /* leave map flat on any texture error */ }
+        }
         if (placed >= 0 && qs.has('mp')) startMultiplayer(M, qs.get('mp'));
       } else {
         statusEl.textContent = 'fetching Data/Shape.dat …';
