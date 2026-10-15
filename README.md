@@ -65,6 +65,20 @@ the game's data directory is ever committed (see `.gitignore`: `*.dat`, `*.bfd`,
 | 5. Movement + determinism | reconstruct + verify motion and RNG from recorded matches | ✔ `tools/verify_motion.js` (const-velocity) + `tools/verify_rng.js` (RNG lockstep **247/247**) |
 | 6. Per-tick simulation | reconstruct every client per-tick system as verified layers + wire them live | ✔ `port/sim/` — all four dispatchers + collision + input, native-test verified, running in the engine |
 
+### The boundary — what isn't included, and why (measured)
+
+Two client pieces are **not** reconstructed: the authoritative **input → acceleration** transfer, and
+the skeleton **animation keyframe sampler** (the per-key stride/time-base isn't in the file). Both run
+only in a live match, and the 2005 servers are gone — and this is **measured, not assumed**. Running
+`AXIS.EXE` (server-select gate bypassed) under Frida shows the process rendering hard
+(`wglSwapBuffers` ~480×/s) while the per-tick animation timer, the model/anim update and the network
+tick execute **0 times**; a second pass shows **no** `connect`/`recv`/`gethostbyname`, **no**
+mutex/named-pipe/file IPC and **no** dialog — the client simply sits at the server-select screen and
+only connects once a server is picked in its UI. So the three reasonable offline routes (static layout
+from the file, a runtime trace, and satisfying a local init dependency) are all tried and insufficient;
+reaching the in-match scene would require reimplementing the full lobby+game server, a separate project.
+Nothing here is guess-filled — see `docs/SPEC.md` §2.10 / §5 for the measurements.
+
 ### The per-tick simulation (reconstructed, verified, wired)
 
 The client runs four per-entity dispatchers each tick plus a shared collision query; **all of them,
