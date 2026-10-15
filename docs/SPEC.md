@@ -344,6 +344,25 @@ the group — which first requires launching AXIS (its own effort, as it is an o
 Until then the mesh/map viewers render untextured flat-shaded geometry and the texture
 gallery (§2.2) shows the textures standalone.
 
+### 2.10 Skeleton / animation (`Data/Skeleton.dat`, `class SkeletonManager`)
+
+`Skeleton.dat` is the plaintext indexed archive (§2.1); each of its 232 entries is one
+skeleton, loaded by `getSkeletonPtrBy()` (mirrors the shape loader, `0x4c6440`
+"class SkeletonManager"). Per-entry layout (from `ARM\BITRON-BAAL-ARM`, 2420 B):
+
+```
+header:  i32 @0x10 = bone count (e.g. 10) ; also size@0x04, flags@0x18/0x1c ; sentinel saved ptrs
+bone[boneCount], 0x70 (112) bytes each, first at +0x24:
+    char name[...]          e.g. "LSHO", "LARM01", "LARM02" (robot-arm joints)
+    f32  transform          bind-pose position + orientation (exact field split TBD)
+<animation keyframes follow>
+```
+
+Bone-record stride 0x70 confirmed by the name offsets (0x24, 0x94, 0x104 …). The mesh's
+per-vertex `attr` (4 bytes, §2.8) is the likely bone-index/weight for skinning. Full
+animation = these skeletons + per-bone keyframe tracks + the `attr` skin binding — the next
+step for animated models.
+
 ## 4. Next analysis targets
 
 1. Multi-group `.shp` inter-group padding → export the remaining 795 meshes; then wire
