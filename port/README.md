@@ -56,19 +56,25 @@ AXIS geometry decoded by the linked-in, byte-exact `axis_shp.c`. Build it with `
   and draws it as a floating avatar cube, status *"1 remote player via ws://… (real type-0 codec,
   backend=wasm)"*, 0 page-errors.
 
-So the reconstruction now runs as compiled code driving real GPU rendering with textures, input,
-audio and real-protocol multiplayer — not only as decoders. The shim pieces (GL, window/loop,
-keyboard, mouse, audio, textures, networking) are in and verified clean (0 page-errors).
+- **per-object map textures:** maps now draw each placed object with its own `SHAPE\<name>` skin
+  where one exists (`engine_map_set_texture`, decoded by `axis_ptx.c`), flat otherwise — verified
+  on `?map=Metropolis` (its tree/banner shapes textured). Building/terrain surfaces stay flat
+  because their skins are per-map `STAGE\…` slots that aren't statically resolvable (§2.9) — a real
+  RE limit, not a code gap.
 
-**What's left for a *playable* port:**
-- **per-object map textures** (most building skins aren't statically resolvable — §2.9 — so this
-  is partial by nature and needs per-object draws);
-- the behaviour-exact **per-tick simulation** — the one genuinely blocked pillar: online play in
-  the engine today is shared positions (like the game's state replication) but *not* the original
-  deterministic combat/physics. That sim runs only inside a live match, and the dead-server install
-  can't reach one, so there is no ground-truth to reconstruct and verify against here (see
-  `../docs/SPEC.md` §5 and §2.9). The RNG/determinism core and the sim entry points are mapped and
-  reconstructed; the behaviour itself is the blocked piece.
+So the reconstruction now runs as compiled code driving real GPU rendering with per-object textures,
+input, audio and real-protocol multiplayer — not only as decoders. **Every shim pillar is in and
+verified clean (0 page-errors): GL, window/loop, keyboard, mouse, audio, textures, networking.**
+
+**The one pillar that cannot be finished here — the per-tick simulation.** Online play in the engine
+today is shared positions (the game's own state-replication model) but *not* the original
+deterministic combat/physics. Those tick functions run only inside a live match, and this
+dead-server offline install cannot reach one (re-tested 2026-10-16: a fresh `AXIS.EXE` stalls at
+"INITIALIZING NETSPHERE", no socket connect in 60 s). So there is **no ground-truth to reconstruct
+and verify the simulation against** — the RNG/determinism core and the sim entry points are mapped
+and reconstructed (`axis_rng.c`, SPEC §5), but the behaviour itself can't be made behaviour-exact
+and *checked* without a live server that no longer exists. It is left honestly unfinished rather
+than filled with guesses.
 
 ---
 
