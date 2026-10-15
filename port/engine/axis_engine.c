@@ -91,7 +91,12 @@ void axis_input_build_masks(const int *enabled, int *pressLatch, int *releaseLat
                             uint32_t *pressMask, uint32_t *releaseMask);
 int axis_input_mask_has(uint32_t mask, int ch);
 static int gActEnabled[16] = {1}, gActPress[16] = {0}, gActRel[16] = {0};
-static float gFireMarkerTtl = 0.0f;
+/* player shots: a fire (channel 0) press launches a projectile from the camera
+ * along its forward vector; it flies (const velocity), collides with the map via
+ * the reconstructed broad+narrow phases, and bursts debris on impact. */
+#define MAXSHOTS 16
+static float gShotPos[MAXSHOTS*3], gShotPrev[MAXSHOTS*3], gShotVel[MAXSHOTS*3], gShotAge[MAXSHOTS];
+static int gShotAlive[MAXSHOTS];
 static unsigned gDbgSeed = 1u;   /* cheap deterministic spread for debris velocities */
 static float dbg_rand(void) { gDbgSeed = gDbgSeed * 1103515245u + 12345u; return (float)((gDbgSeed >> 16) & 0x7fff) / 32767.0f; }
 
@@ -285,6 +290,11 @@ static int proj_hit_map(const float *prev, const float *cur, float *outHit) {
     return found;
 }
 
+/* Trigger a fire action programmatically (same latch the F key sets); the frame
+ * loop runs it through axis_input_build_masks like any input. Lets the page fire
+ * without a synthetic keypress (used by ?fire and for automated verification). */
+EMSCRIPTEN_KEEPALIVE void engine_fire(void) { gActPress[0] = 1; }
+
 /* Demo: run the reconstructed projectile combat sim in the engine — place a ring
  * of targets around the loaded map's centre and fire homing projectiles at them
  * from above. The sim (axis_sim_tick) advances them each frame; the engine draws
@@ -320,6 +330,7 @@ EMSCRIPTEN_KEEPALIVE void engine_proj_demo(void) {
         gItemPos[i*3+2] = gCenter[2] + sinf(a) * R * 0.8f;
         gItemAlive[i] = 1;
     }
+    for (int i = 0; i < MAXSHOTS; i++) gShotAlive[i] = 0;
     projDemo = 1;
 }
 
@@ -585,8 +596,27 @@ static void frame(void) {
             {
                 uint32_t pm, rm;
                 axis_input_build_masks(gActEnabled, gActPress, gActRel, 16, &pm, &rm);
-                if (axis_input_mask_has(pm, 0)) gFireMarkerTtl = 1.0f;
-                if (gFireMarkerTtl > 0.0f) gFireMarkerTtl -= sdt;
+                if (axis_input_mask_has(pm, 0)) {           /* fire: launch a shot from the camera */
+                    for (int s = 0; s < MAXSHOTS; s++) if (!gShotAlive[s]) {
+                        float fwd[3]; camForward(fwd);
+                        float spd = gRadius * 1.4f;
+                        gShotPos[s*3+0]=camPos[0]; gShotPos[s*3+1]=camPos[1]; gShotPos[s*3+2]=camPos[2];
+                        gShotVel[s*3+0]=fwd[0]*spd; gShotVel[s*3+1]=fwd[1]*spd; gShotVel[s*3+2]=fwd[2]*spd;
+                        gShotAge[s]=0.0f; gShotAlive[s]=1;
+                        break;
+                    }
+                }
+                /* advance player shots: const-velocity step, map collision, debris on hit */
+                for (int s = 0; s < MAXSHOTS; s++) {
+                    if (!gShotAlive[s]) continue;
+                    float *p = &gShotPos[s*3], *pv = &gShotPrev[s*3], *vv = &gShotVel[s*3];
+                    pv[0]=p[0]; pv[1]=p[1]; pv[2]=p[2];
+                    p[0]+=vv[0]*sdt; p[1]+=vv[1]*sdt; p[2]+=vv[2]*sdt;
+                    gShotAge[s]+=sdt;
+                    float hp[3];
+                    if (proj_hit_map(pv, p, hp)) { spawn_debris(hp); gShotAlive[s]=0; }
+                    else if (gShotAge[s] > 2.5f) gShotAlive[s]=0;
+                }
             }
             int anyLive = 0; for (int i = 0; i < gProjN; i++) if (gProjAlive[i]) anyLive = 1;
             if (!anyLive) engine_proj_demo();                /* loop the demo */
@@ -647,14 +677,17 @@ static void frame(void) {
                     glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
                 }
             }
-            if (gFireMarkerTtl > 0.0f) {   /* fire-action marker (axis_input): magenta cube high above the gate */
-                float sm = gRadius * 0.08f;
-                glUniform3f(glGetUniformLocation(prog, "uColor"), 0.95f, 0.15f, 0.9f);
-                float m[16] = { sm,0,0,0, 0,sm,0,0, 0,0,sm,0,
-                                gPropPos[0], gPropPos[1] + gRadius * 1.3f, gPropPos[2], 1 };
-                float mv[16]; mat_mul(mv, mvp, m);
-                glUniformMatrix4fv(uM, 1, GL_FALSE, mv); glUniformMatrix4fv(uMo, 1, GL_FALSE, m);
-                glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
+            {   /* player shots (fired via axis_input): magenta cubes */
+                float ss = gRadius * 0.03f;
+                for (int s = 0; s < MAXSHOTS; s++) {
+                    if (!gShotAlive[s]) continue;
+                    glUniform3f(glGetUniformLocation(prog, "uColor"), 0.95f, 0.15f, 0.9f);
+                    float *p = &gShotPos[s*3];
+                    float m[16] = { ss,0,0,0, 0,ss,0,0, 0,0,ss,0, p[0], p[1], p[2], 1 };
+                    float mv[16]; mat_mul(mv, mvp, m);
+                    glUniformMatrix4fv(uM, 1, GL_FALSE, mv); glUniformMatrix4fv(uMo, 1, GL_FALSE, m);
+                    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
+                }
             }
         }
     }

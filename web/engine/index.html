@@ -141,7 +141,8 @@
         if (placed >= 0 && qs.has('mp')) startMultiplayer(M, qs.get('mp'));
         if (placed >= 0 && qs.has('proj')) {           // ?proj -> run the reconstructed projectile sim in-engine
           M.ccall('engine_proj_demo', null, [], []);
-          statusEl.textContent += ' · sim live: homing projectiles collide with map geometry, spawn gravity debris, open a proximity gate, and collect pickups; press F to fire (edge-triggered input flashes a marker above the gate) — reconstructed port/sim: axis_proj + axis_broadphase + axis_collide + axis_effect + axis_prop + axis_pickup + axis_input, all in WASM';
+          if (qs.has('fire')) setInterval(() => { try { M.ccall('engine_fire', null, [], []); } catch (_) {} }, 1000);
+          statusEl.textContent += ' · sim live: homing projectiles collide with map geometry, spawn gravity debris, open a proximity gate, and collect pickups. Walk with WASD, press F to fire a projectile from the camera (it flies, collides with the map, bursts debris) — reconstructed port/sim: axis_proj + axis_broadphase + axis_collide + axis_effect + axis_prop + axis_pickup + axis_input, all in WASM';
         }
       } else {
         statusEl.textContent = 'fetching Data/Shape.dat …';
