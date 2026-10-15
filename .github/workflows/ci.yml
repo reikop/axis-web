@@ -1,0 +1,40 @@
+name: ci
+
+# Continuously verify the reconstructed simulation layers. These native tests
+# (port/sim) check the reconstruction against behavioural / mathematical
+# identities and need NO game data, so they run on every push and keep the
+# "reconstructed + verified" claims honest for anyone reading the repo.
+# (The byte-exact decoder verifiers need the user's own game files and so are
+# not run here — see README / docs/SPEC.md.)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  sim-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build + run the reconstructed-simulation tests
+        run: |
+          cd port/sim
+          CC=gcc ./run_tests.sh
+
+  engine-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+      - name: Build the decoder reactor + the WASM/WebGL engine (compile only)
+        run: |
+          cd port
+          emcc -O2 -ffp-contract=off -Isim -c engine/axis_engine.c -o /tmp/axis_engine.o
+          for f in sim/axis_vecmath.c sim/axis_proj.c sim/axis_target.c sim/axis_collide.c \
+                   sim/axis_tick.c sim/axis_effect.c sim/axis_broadphase.c sim/axis_prop.c \
+                   sim/axis_pickup.c sim/axis_input.c; do
+            emcc -O2 -ffp-contract=off -Isim -c "$f" -o "/tmp/$(basename "$f" .c).o"
+          done
+          echo "engine + sim layers compile under emcc"
