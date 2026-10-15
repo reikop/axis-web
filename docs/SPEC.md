@@ -378,6 +378,17 @@ gallery (§2.2) shows the textures standalone.
    `Autoplay001.ape` (539 KB) decrypts whole (version `0x1201`) and contains the per-tick
    64-byte player records (tick / actor id / payload with position). Decoding a full `.ape`
    is the practical way to recover the packet semantics for the server reimplementation.
+
+   **Recv/dispatch** (`FUN_004a7ab0`): dequeues 64-byte packets from the per-channel ring
+   buffers (`DAT_00af0b70`, 0x10 channels × 0x80 slots × 0x40 bytes), tracking per-channel
+   read cursors (`DAT_00b12b70[ch]`, `& 0x7f`) and a round-robin channel index
+   (`DAT_00b12bb0`, `& 0x0f`). It returns the packet **type** (1 = normal, 2 = relayed/echo
+   with a re-send via `FUN_00450700`) plus the actor id and 64-byte payload. So both the
+   **send** (`pnSendPacketData`) and **recv** (`FUN_004a7ab0`) sides of the transport are
+   mapped; a `tools/`-side `.ape` replay decoder + the `server/relay.js` relay already
+   implement this model end-to-end (verified two-client shared-map multiplayer in the browser,
+   see `../server/README.md`). Remaining: per-packet-type field semantics (actions, spawns,
+   hits) for server-authoritative game logic.
 5. (optional) full PTX block decoder for a standalone PNG extractor — done (`tools/ptx_decode.py`).
 
 See `../port/README.md` for how these feed the approach-B WASM build.
