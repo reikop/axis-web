@@ -131,12 +131,18 @@ def main():
             json.dump(audio, f)
         print(f"audio    : {len(audio['music'])} tracks + {len(audio['sfx'])} sfx -> web/audio.json")
 
-    # decode textures (PTX -> PNG) for the gallery
+    # Decode textures (PTX -> PNG) for the gallery fallback IN THE BACKGROUND, so the
+    # server comes up immediately: every viewer decodes textures live from /game/ via
+    # ptx.js, and the pre-rendered PNGs are only the offline fallback for textures.html.
     if os.path.isfile(os.path.join(game, "AXIS.EXE")):
-        subprocess.call([sys.executable, "-I",
-                         os.path.join(HERE, "tools", "export_textures.py"),
-                         game, os.path.join(WEB, "textures")],
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        def _bake_textures():
+            subprocess.call([sys.executable, "-I",
+                             os.path.join(HERE, "tools", "export_textures.py"),
+                             game, os.path.join(WEB, "textures")],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print("textures : gallery PNGs baked -> web/textures/ (live decode via /game/ meanwhile)")
+        import threading
+        threading.Thread(target=_bake_textures, daemon=True).start()
 
     # serve web/ normally, plus /game/<path> from the user's install (read-only, local)
     # so the browser can decode textures/meshes live from their own game data.
@@ -158,7 +164,7 @@ def main():
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("127.0.0.1", port), Handler) as httpd:
         url = f"http://127.0.0.1:{port}/home.html"
-        print(f"serving  : {url}  (Ctrl+C to stop)")
+        print(f"serving  : {url}  (Ctrl+C to stop)", flush=True)
         try:
             webbrowser.open(url)
         except Exception:
