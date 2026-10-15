@@ -26,10 +26,10 @@ set -euo pipefail
 cd "$(dirname "$0")"
 GAME="${1:-../../Axis_Win}"
 
-SRC=(src/axis_crypt.c src/axis_netdecode.c src/axis_rng.c src/axis_shp.c src/axis_bfd.c src/axis_ptx.c)
+SRC=(src/axis_crypt.c src/axis_netdecode.c src/axis_rng.c src/axis_shp.c src/axis_bfd.c src/axis_ptx.c src/axis_skel.c)
 OUT=wasm/axis.wasm
 
-EXPORTS='["_axis_decrypt","_axis_encrypt","_axis_decode_state","_axis_encode_state","_axis_rng_fill","_axis_shp_parse","_axis_bfd_extract","_axis_ptx_decode"]'
+EXPORTS='["_axis_decrypt","_axis_encrypt","_axis_decode_state","_axis_encode_state","_axis_rng_fill","_axis_shp_parse","_axis_bfd_extract","_axis_ptx_decode","_axis_skel_parse"]'
 
 if ! command -v emcc >/dev/null 2>&1; then
   echo "emcc not found. Install it first (see the header of this script)."

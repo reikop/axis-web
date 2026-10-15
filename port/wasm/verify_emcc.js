@@ -55,7 +55,7 @@ async function main() {
   const decrypt = F('axis_decrypt'), encrypt = F('axis_encrypt'),
         decodeState = F('axis_decode_state'), encodeState = F('axis_encode_state'),
         rngFill = F('axis_rng_fill'), shpParse = F('axis_shp_parse'), bfdExtract = F('axis_bfd_extract'),
-        ptxDecode = F('axis_ptx_decode');
+        ptxDecode = F('axis_ptx_decode'), skelParse = F('axis_skel_parse');
   for (const [n, f] of [['axis_decrypt', decrypt], ['axis_encrypt', encrypt], ['axis_decode_state', decodeState], ['axis_encode_state', encodeState], ['axis_rng_fill', rngFill]])
     if (typeof f !== 'function') { console.error('missing export', n); process.exit(1); }
 
@@ -306,6 +306,44 @@ async function main() {
         }
       }
       console.log(`\nptx texture decode: ${ok}/${tested} textures byte-identical to web/ptx.js (${nonptx} non-PTX entries skipped)${bad ? `, ${bad} MISMATCH` : ''}`);
+      if (firstBad) console.log(`  first mismatch: ${firstBad}`);
+      fails += bad;
+    }
+  }
+
+  // ---- axis_skel_parse: WASM bone decoder vs web/skel.js over every Skeleton.dat rig
+  const skelDat = path.join(game, 'Data', 'Skeleton.dat');
+  if (typeof skelParse === 'function' && fs.existsSync(skelDat)) {
+    let SK;
+    try { SK = require(path.join(__dirname, '..', '..', 'web', 'skel.js')); }
+    catch (e) { console.log('skel.js not loadable — skipping skeleton check:', e.message); SK = null; }
+    if (SK) {
+      const raw = fs.readFileSync(skelDat);
+      const ab = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
+      const list = SK.listSkeletons(ab);
+      const SF = BASE, PAR = 0x1400000, FOUT = 0x1440000, SC = 0x14C0000, BCAP = 8192;
+      ensure(SC + 64);
+      new Uint8Array(memory.buffer).set(new Uint8Array(ab), SF);
+      let ok = 0, bad = 0, firstBad = null;
+      for (const e of list) {
+        const js = SK.parseSkeleton(ab, e);
+        if (js.bones.length > BCAP) continue;
+        skelParse(SF, e.offset, e.size, PAR, FOUT, SC);
+        const cnt = new Uint32Array(memory.buffer, SC, 2);
+        const par = new Int32Array(memory.buffer, PAR, js.bones.length);
+        const fo = new Float32Array(memory.buffer, FOUT, js.bones.length * 7);
+        let why = null;
+        if (cnt[1] !== js.bones.length) why = `emitted ${cnt[1]}!=${js.bones.length}`;
+        else for (let b = 0; b < js.bones.length && !why; b++) {
+          const J = js.bones[b];
+          if (par[b] !== J.parent) why = `bone[${b}].parent`;
+          else if (!Object.is(fo[b*7], J.t[0]) || !Object.is(fo[b*7+1], J.t[1]) || !Object.is(fo[b*7+2], J.t[2])) why = `bone[${b}].t`;
+          else if (!Object.is(fo[b*7+3], J.angle)) why = `bone[${b}].angle`;
+          else if (!Object.is(fo[b*7+4], J.axis[0]) || !Object.is(fo[b*7+5], J.axis[1]) || !Object.is(fo[b*7+6], J.axis[2])) why = `bone[${b}].axis`;
+        }
+        if (why) { bad++; firstBad = firstBad || `${e.name}: ${why}`; } else ok++;
+      }
+      console.log(`\nskeleton decode: ${ok}/${list.length} rigs byte-identical to web/skel.js (parent+translation+axis-angle)${bad ? `, ${bad} MISMATCH` : ''}`);
       if (firstBad) console.log(`  first mismatch: ${firstBad}`);
       fails += bad;
     }
