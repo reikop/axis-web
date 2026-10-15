@@ -358,6 +358,14 @@ gallery (§2.2) shows the textures standalone.
    (`0x4c58f8`). Much of the socket/server-list logic lives in `Launcher/` (`GetList.exe`,
    `SocketUpdate/`, `ServerList.dat`). Reversing the packet format + dispatch and
    reimplementing the server is its own large workstream (→ Node server + WebSocket relay).
+
+   **Packet format** (from `pnSendPacketData` = `FUN_004a79c0`): game packets carry a
+   **fixed 64-byte (0x40) payload** — a non-0x40 size triggers the `pnSendPacketData()`
+   size error. The payload is wrapped with a **9-byte header** and sent as a **73-byte
+   frame** (`FUN_00450700(buf, 0, payload+9)`). A per-channel **sequence number** (channel
+   id `DAT_009fee24`; counters `DAT_00b12b70[ch]`, wrapped `& 0x7f`) indexes a resend ring
+   buffer at `DAT_00af0b70` (0x80 slots × 0x40 bytes per channel). Next: the 9-byte header
+   fields, the socket send (`FUN_00450700`), and the recv/dispatch (packet-type → handler).
 5. (optional) full PTX block decoder for a standalone PNG extractor — done (`tools/ptx_decode.py`).
 
 See `../port/README.md` for how these feed the approach-B WASM build.
