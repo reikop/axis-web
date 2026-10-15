@@ -383,6 +383,17 @@ Then the viewers map each group to the right `Image*.dat` texture they already d
 `port/frida/capture_textures.js` reproduces the capture (its header has the one-time registry
 setup; remove with `reg delete "HKCU\SOFTWARE\AxisArena" /f`).
 
+**Texture-load pipeline mapped (`FUN_00454f30`, the only caller of the PTX codec
+`FUN_0046df80`).** It loads one texture slot: it takes the slot's stored name (at
+`ecx + 0xc0128 + slot*0x68`), transforms it with the **context prefix `DAT_004b22cc`**
+(`FUN_0049e29b`) into the real source name, then by a per-slot format flag (`ecx+0xc0114`)
+loads it as **PTX** (from the Image pages — flag 0), **BMP** (flag 1) or **RAW** (flag 2),
+building `_ALPHA` / `_COLOR` sibling names with `sprintf` (`"%s_ALPHA"`, `"%s_%s"`…). So the
+alias→source resolution is "`DAT_004b22cc` prefix + slot name", and the prefix is what varies by
+model/map context. Capturing `alias→source` therefore means hooking `FUN_00454f30` to record
+`(DAT_004b22cc, slot name, resolved source, format)` during a model load — the precise, final
+capture needed to drive textured rendering, now that the gate bypass makes the game runnable.
+
 Until that mapping is wired in, the mesh/map viewers render untextured flat-shaded geometry and
 the texture gallery (§2.2) shows the textures standalone.
 
