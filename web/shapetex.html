@@ -105,13 +105,13 @@ function draw(){
     faces.push([z,ti,sh]);
   }
   faces.sort((p,q)=>q[0]-p[0]);
-  const texOn = useTex && TEX;
   for(const [z,ti,sh] of faces){
     const t=M.tris[ti]; const a=S[t[0]],b=S[t[1]],c=S[t[2]];
-    if(texOn && M.uv.length){
-      const tw=TEX.width, th=TEX.height;
+    const tex = useTex ? M.triTex[ti] : null;
+    if(tex && M.uv.length){
+      const tw=tex.width, th=tex.height;
       const ua=M.uv[t[0]],ub=M.uv[t[1]],uc=M.uv[t[2]];
-      texTri(TEX, a[0],a[1],b[0],b[1],c[0],c[1],
+      texTri(tex, a[0],a[1],b[0],b[1],c[0],c[1],
         ua[0]*tw,ua[1]*th, ub[0]*tw,ub[1]*th, uc[0]*tw,uc[1]*th);
     } else {
       const g=Math.round(40+sh*175);
@@ -128,38 +128,49 @@ function fit(){
   center=[(mn[0]+mx[0])/2,(mn[1]+mx[1])/2,(mn[2]+mx[2])/2];
   ext=Math.max(1,Math.max(mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2]));
 }
-function findTex(name){                  // name like 'SHAPE\\ALIEN\\GIRL'
-  const up=name.toUpperCase();
-  for(const im of IMG){
-    for(let i=0;i<im.toc.length;i++){
-      if(im.toc[i].name.toUpperCase()===up){
-        const e=im.toc[i]; const blob=im.ab.slice(e.off,e.end);
-        try{ return window.decodePTX(blob, EXE); }catch(err){ return null; }
-      }
-    }
-  }
-  return null;
-}
+const texCanvasCache=new Map();
 function texToCanvas(r){ const c=document.createElement("canvas"); c.width=r.w; c.height=r.h;
   const x=c.getContext("2d"); const im=x.createImageData(r.w,r.h); im.data.set(r.rgba); x.putImageData(im,0,0);
   return c; }   // NOTE: never re-assign c.width after drawing — it clears the canvas
+// decode a texture by exact name (cached) -> canvas or null
+function texByName(name){
+  const up=name.toUpperCase();
+  if(texCanvasCache.has(up)) return texCanvasCache.get(up);
+  let out=null;
+  for(const im of IMG){
+    const e=im.toc.find(t=>t.name.toUpperCase()===up);
+    if(e){ try{ out=texToCanvas(window.decodePTX(im.ab.slice(e.off,e.end), EXE)); }catch(_){ out=null; } break; }
+  }
+  texCanvasCache.set(up,out); return out;
+}
+// resolve a group's texture: per-group index "NN" -> TEXTURE\NN (try padded), else shape skin SHAPE\<name>
+function groupTex(shapeName, tex4){
+  if(tex4){ const cands=[tex4]; if(/^\d+$/.test(tex4)) cands.push(tex4.padStart(2,"0"));
+    for(const cc of cands){ const t=texByName("TEXTURE\\"+cc); if(t) return t; } return null; }
+  return texByName("SHAPE\\"+shapeName);
+}
 
 function load(idx){
   const e=SHAPES[idx];
   const r=window.AXISShape.parseShape(SHAPE, e.off, e.end);
-  M={pos:r.pos,uv:r.uv,tris:r.tris,name:e.name};
-  const td=findTex("SHAPE\\"+e.name);
-  TEX=null;
-  if(td){ TEX=texToCanvas(td);
-    const tv=document.getElementById("texview"); const tx=tv.getContext("2d");
-    tx.imageSmoothingEnabled=false; tx.clearRect(0,0,96,96); tx.drawImage(TEX,0,0,96,96);
-    document.getElementById("texview").style.display="block";
-  } else { document.getElementById("texview").style.display="none"; }
+  M={pos:r.pos,uv:r.uv,tris:r.tris,name:e.name,groups:r.groups};
+  // per-triangle texture: resolve each group's skin
+  const triTex=new Array(r.tris.length).fill(null);
+  let first=null, textured=0;
+  for(const g of r.groups){
+    const tx=groupTex(e.name, g.tex4);
+    if(tx){ for(let ti=g.triStart;ti<g.triEnd;ti++){ triTex[ti]=tx; textured++; } if(!first)first=tx; }
+  }
+  M.triTex=triTex; TEX=first;
+  const tv=document.getElementById("texview");
+  if(first){ const txc=tv.getContext("2d"); txc.imageSmoothingEnabled=false; txc.clearRect(0,0,96,96); txc.drawImage(first,0,0,96,96); tv.style.display="block"; }
+  else tv.style.display="none";
   fit();
+  const nTex=r.groups.filter(g=>groupTex(e.name,g.tex4)).length;
   document.getElementById("stats").innerHTML=
     `<span>shape</span><b>${e.name}</b><span>verts</span><b>${r.pos.length}</b><span>tris</span><b>${r.tris.length}</b>`+
-    `<span>texture</span><b>${TEX?(TEX.width+"×"+TEX.height):"(none)"}</b>`;
-  hud.textContent=TEX?`textured · ${TEX.width}×${TEX.height}`:"no matching skin";
+    `<span>groups</span><b>${r.groups.length}</b><span>textured</span><b>${nTex}/${r.groups.length} grp</b>`;
+  hud.textContent=first?`textured · ${textured}/${r.tris.length} tris`:"no matching skin";
   draw(); try{localStorage.setItem("axtex",idx);}catch(_){}
 }
 
@@ -185,12 +196,20 @@ async function init(){
     }
     const texNames=new Set();
     for(const im of IMG) for(const e of im.toc) texNames.add(e.name.toUpperCase());
-    // keep only shapes whose SHAPE\<name> skin exists
-    SHAPES=toc.filter(e=>texNames.has(("SHAPE\\"+e.name).toUpperCase()));
+    // group+4 texture indices, read from headers only (fast) — a shape is texturable if it
+    // has a SHAPE\<name> skin or any group with a stored texture index.
+    const dvS=new DataView(SHAPE), u8S=new Uint8Array(SHAPE);
+    function hasGroupTex(off){
+      const gc=dvS.getInt32(off+0x10,true); if(gc<=0||gc>2000) return false;
+      for(let g=0;g<gc;g++){ const base=off+0x4c+g*0x80+4; if(base+1>SHAPE.byteLength) break;
+        if(u8S[base]) return true; }   // non-empty group+4 = has a stored texture index
+      return false;
+    }
+    SHAPES=toc.filter(e=>texNames.has(("SHAPE\\"+e.name).toUpperCase()) || hasGroupTex(e.off));
     const sel=document.getElementById("sel");
     sel.innerHTML=SHAPES.map((e,i)=>`<option value="${i}">${e.name}</option>`).join("");
-    document.querySelector(".sub").textContent=`${SHAPES.length} meshes with a real skin · live from Shape.dat + Image*.dat`;
-    let start=SHAPES.findIndex(e=>e.name.toUpperCase().endsWith("GIRL")); if(start<0)start=0;
+    document.querySelector(".sub").textContent=`${SHAPES.length} texturable meshes · live from Shape.dat + Image*.dat`;
+    let start=SHAPES.findIndex(e=>e.name.toUpperCase().endsWith("BLDG_OS01")); if(start<0)start=SHAPES.findIndex(e=>e.name.toUpperCase().endsWith("GIRL")); if(start<0)start=0;
     try{const s=+localStorage.getItem("axtex"); if(s>=0&&s<SHAPES.length)start=s;}catch(_){}
     sel.value=start; sel.addEventListener("change",()=>load(+sel.value));
     resize(); load(start); loop();

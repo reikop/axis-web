@@ -5,7 +5,10 @@
  * the asset loading the WASM client (approach B) ultimately does. See docs/SPEC.md §2.1/§2.8.
  *
  *   readTOC(datArrayBuffer)                 -> [{name, off, end}]
- *   parseShape(datArrayBuffer, off, end)    -> {pos:[[x,y,z]], nrm, uv, tris:[[a,b,c]]}  (groups merged)
+ *   parseShape(datArrayBuffer, off, end)    -> {pos:[[x,y,z]], nrm, uv, tris:[[a,b,c]],
+ *                                               groups:[{tex4, triStart, triEnd}]}  (groups merged)
+ *   tex4 is the group's stored texture index ("01".."NN", "" if none): the per-group skin
+ *   resolves to the "TEXTURE\<tex4>" PTX entry (SPEC §2.9).
  */
 (function (root) {
   'use strict';
@@ -33,15 +36,17 @@
     const tag = dv.getUint32(off + 0x30, true);
     if (tag !== TAG) throw new Error('tag ' + tag.toString(16));
     const gcount = dv.getInt32(off + 0x10, true);
-    const meta = [];
+    const u8 = new Uint8Array(ab);
+    const meta = [], tex4 = [];
     for (let g = 0; g < gcount; g++) {
       const gh = off + OBJ_HDR + g * GRP_HDR;
       meta.push(dv.getInt32(gh + 0x34, true));   // vertexCount
+      tex4.push(name64(u8, gh + 4));             // stored per-group texture index ("01"..)
     }
     let p = off + OBJ_HDR + gcount * GRP_HDR;
-    const pos = [], nrm = [], uv = [], tris = [];
+    const pos = [], nrm = [], uv = [], tris = [], groups = [];
     for (let g = 0; g < gcount; g++) {
-      const vc = meta[g], base = pos.length;
+      const vc = meta[g], base = pos.length, triStart = tris.length;
       for (let i = 0; i < vc; i++) pos.push([dv.getFloat32(p + i * 12, true), dv.getFloat32(p + i * 12 + 4, true), dv.getFloat32(p + i * 12 + 8, true)]);
       p += vc * 12;
       for (let i = 0; i < vc; i++) nrm.push([dv.getFloat32(p + i * 12, true), dv.getFloat32(p + i * 12 + 4, true), dv.getFloat32(p + i * 12 + 8, true)]);
@@ -57,8 +62,9 @@
         else if (c > 0x04000000 && c < 0x40000000) { p += 12; }
         else break;
       }
+      groups.push({ tex4: tex4[g], triStart, triEnd: tris.length });
     }
-    return { pos, nrm, uv, tris, consumed: p - off, size: end - off };
+    return { pos, nrm, uv, tris, groups, consumed: p - off, size: end - off };
   }
 
   root.AXISShape = { readTOC, parseShape };
