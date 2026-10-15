@@ -44,6 +44,7 @@
     <div><label for="mapsel">Map</label><select id="mapsel"></select></div>
     <div class="stat" id="stats"></div>
     <label class="rowc"><input type="checkbox" id="meshes" checked> render meshes</label>
+    <label class="rowc"><input type="checkbox" id="textures" checked> textures</label>
     <label class="rowc"><input type="checkbox" id="wire"> wireframe</label>
     <label class="rowc"><input type="checkbox" id="fpv"> walk inside (first-person)</label>
     <div style="border-top:1px solid var(--line);padding-top:12px;margin-top:2px">
@@ -61,14 +62,41 @@
 <script src="shp.js"></script>
 <script src="bfd.js"></script>
 <script src="crypt.js"></script>
+<script src="ptx.js"></script>
 <script>
 const cv=document.getElementById("c"),ctx=cv.getContext("2d"),hud=document.getElementById("hud");
 let DPR=Math.min(devicePixelRatio||1,2);
 let objs=[], instances=[], center=[0,0,0], ext=1000;
-let yaw=0.7, pitch=0.5, dist=2.4, useMesh=true, wire=false;
+let yaw=0.7, pitch=0.5, dist=2.4, useMesh=true, wire=false, texOn=true;
 let SHIDX={};                 // lowercase id -> real id (JSON mode)
 const meshCache=new Map();
 const LIVE={on:false, shapeAB:null, byLower:{}};   // in-browser decode straight from game files
+let EXE=null; const IMG=[]; const texCache=new Map();   // AXIS.EXE + Image*.dat TOCs for textures
+
+// decode an object's skin (SHAPE\<name>) from the Image pages via ptx.js; cached
+function decodeTexFor(shapeName){
+  const key="SHAPE\\"+shapeName; const up=key.toUpperCase();
+  if(texCache.has(up)) return texCache.get(up);
+  let out=null;
+  if(EXE) for(const im of IMG){
+    const e=im.toc.find(t=>t.name.toUpperCase()===up);
+    if(e){ try{ const r=window.decodePTX(im.ab.slice(e.off,e.end),EXE);
+      const c=document.createElement("canvas"); c.width=r.w; c.height=r.h;
+      const x=c.getContext("2d"); const img=x.createImageData(r.w,r.h); img.data.set(r.rgba); x.putImageData(img,0,0);
+      out=c; }catch(_){ out=null; } break; }
+  }
+  texCache.set(up,out); return out;
+}
+// affine texture-mapped triangle (texture px -> screen)
+function texTri(img, sx0,sy0,sx1,sy1,sx2,sy2, u0,v0,u1,v1,u2,v2){
+  const d=u0*(v1-v2)-v0*(u1-u2)+(u1*v2-u2*v1); if(Math.abs(d)<1e-6)return;
+  const a=(sx0*(v1-v2)-v0*(sx1-sx2)+(sx1*v2-sx2*v1))/d, b=(u0*(sx1-sx2)-sx0*(u1-u2)+(u1*sx2-u2*sx1))/d,
+        c=(u0*(v1*sx2-v2*sx1)-v0*(u1*sx2-u2*sx1)+sx0*(u1*v2-u2*v1))/d,
+        e=(sy0*(v1-v2)-v0*(sy1-sy2)+(sy1*v2-sy2*v1))/d, f=(u0*(sy1-sy2)-sy0*(u1-u2)+(u1*sy2-u2*sy1))/d,
+        g=(u0*(v1*sy2-v2*sy1)-v0*(u1*sy2-u2*sy1)+sy0*(u1*v2-u2*v1))/d;
+  ctx.save(); ctx.beginPath(); ctx.moveTo(sx0,sy0); ctx.lineTo(sx1,sy1); ctx.lineTo(sx2,sy2); ctx.closePath(); ctx.clip();
+  ctx.setTransform(a,e,b,f,c,g); ctx.drawImage(img,0,0); ctx.restore(); ctx.setTransform(1,0,0,1,0,0);
+}
 
 function resize(){DPR=Math.min(devicePixelRatio||1,2);cv.width=cv.clientWidth*DPR;cv.height=cv.clientHeight*DPR;draw();}
 addEventListener("resize",resize);
@@ -107,7 +135,9 @@ function draw(){
         let ny=(rb[2]-ra[2])*(rc[0]-ra[0])-(rb[0]-ra[0])*(rc[2]-ra[2]);
         let nz=(rb[0]-ra[0])*(rc[1]-ra[1])-(rb[1]-ra[1])*(rc[0]-ra[0]);
         const ln=Math.hypot(nx,ny,nz)||1; let d=Math.abs((nx*L[0]+ny*L[1]+nz*L[2])/ln);
-        faces.push([(a[2]+b[2]+c[2])/3,a,b,c,d,inst.col]);
+        const tx=(inst.tex&&texOn)?inst.tex:null;
+        faces.push([(a[2]+b[2]+c[2])/3,a,b,c,d,inst.col, tx,
+          tx?m.uv[t[0]]:null, tx?m.uv[t[1]]:null, tx?m.uv[t[2]]:null]);
       }
     }
   } else {
@@ -123,7 +153,10 @@ function draw(){
     ctx.globalAlpha=1; return;
   }
   faces.sort((p,q)=>q[0]-p[0]);
-  for(const [z,a,b,c,d,col] of faces){
+  for(const [z,a,b,c,d,col,tex,ua,ub,uc] of faces){
+    if(tex && ua && !wire){ const tw=tex.width, th=tex.height;
+      texTri(tex, a[0],a[1],b[0],b[1],c[0],c[1], ua[0]*tw,ua[1]*th, ub[0]*tw,ub[1]*th, uc[0]*tw,uc[1]*th);
+      continue; }
     ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.lineTo(c[0],c[1]);ctx.closePath();
     if(wire){ctx.strokeStyle=col;ctx.globalAlpha=0.5;ctx.lineWidth=DPR;ctx.stroke();ctx.globalAlpha=1;}
     else{ const sh=0.35+d*0.65;
@@ -195,7 +228,8 @@ async function loadMap(name){
   for(const o of objs){
     const id=o.name.replace(/[\\/]/g,"_"); const m=meshes[id];
     if(m){ matched++; const off=[o.pos[0]-m.centroid[0],o.pos[1]-m.centroid[1],o.pos[2]-m.centroid[2]];
-      instances.push({mesh:m,off,col:o.col}); tris+=m.tris.length;
+      const tex=(LIVE.on && m.uv && m.uv.length)?decodeTexFor(o.name):null;
+      instances.push({mesh:m,off,col:o.col,tex}); tris+=m.tris.length;
       for(const p of m.pos) pts.push([p[0]+off[0],p[1]+off[1],p[2]+off[2]]); }
     else pts.push(o.pos);
   }
@@ -214,6 +248,7 @@ cv.addEventListener("pointermove",e=>{ if(!drag)return; yaw-=(e.clientX-drag.x)*
 cv.addEventListener("pointerup",()=>drag=null);
 cv.addEventListener("wheel",e=>{e.preventDefault();dist=Math.max(0.6,Math.min(8,dist*(e.deltaY>0?1.1:0.9)));draw();},{passive:false});
 document.getElementById("meshes").addEventListener("change",e=>{useMesh=e.target.checked;draw();});
+document.getElementById("textures").addEventListener("change",e=>{texOn=e.target.checked;draw();});
 document.getElementById("wire").addEventListener("change",e=>{wire=e.target.checked;draw();});
 let orbitDist=2.4;
 document.getElementById("fpv").addEventListener("change",e=>{
@@ -287,6 +322,11 @@ async function initLive(){
   const ab=await (await fetch("/game/Data/Shape.dat")).arrayBuffer();
   LIVE.on=true; LIVE.shapeAB=ab;
   for(const e of window.AXISShape.readTOC(ab)) LIVE.byLower[e.name.replace(/[\\/]/g,"_").toLowerCase()]=e;
+  // textures: AXIS.EXE (for ptx.js) + the Image*.dat TOCs
+  try{ EXE=await (await fetch("/game/AXIS.EXE")).arrayBuffer();
+    for(let i=0;i<=5;i++){ try{ const iab=await (await fetch(`/game/Data/Image${i}.dat`)).arrayBuffer();
+      IMG.push({ab:iab, toc:window.AXISShape.readTOC(iab)}); }catch(_){}}
+  }catch(_){ EXE=null; }
   // map list from the /game/Map/ directory listing
   const html=await (await fetch("/game/Map/")).text();
   const maps=[...html.matchAll(/href="([^"]+?)\.bfd"/gi)].map(m=>decodeURIComponent(m[1])).filter((v,i,a)=>a.indexOf(v)===i).sort();
