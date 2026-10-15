@@ -295,6 +295,9 @@ static int proj_hit_map(const float *prev, const float *cur, float *outHit) {
  * without a synthetic keypress (used by ?fire and for automated verification). */
 EMSCRIPTEN_KEEPALIVE void engine_fire(void) { gActPress[0] = 1; }
 
+/* HUD state: how many pickups the reconstructed axis_pickup layer has collected. */
+EMSCRIPTEN_KEEPALIVE int engine_pickups(void) { return gPickupCount; }
+
 /* Demo: run the reconstructed projectile combat sim in the engine — place a ring
  * of targets around the loaded map's centre and fire homing projectiles at them
  * from above. The sim (axis_sim_tick) advances them each frame; the engine draws

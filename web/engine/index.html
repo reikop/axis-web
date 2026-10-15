@@ -11,6 +11,15 @@
   canvas { background: #111417; border: 1px solid #262b31; max-width: 100%; touch-action: none; }
   #status { font-size: 12px; color: #9aa3ad; min-height: 1.4em; }
   a { color: #6fb3ff; }
+  #stage { position: relative; line-height: 0; }
+  #hud { position: absolute; top: 8px; left: 10px; font: 12px/1.5 system-ui, sans-serif;
+         color: #d7e6f5; text-shadow: 0 1px 2px #000; pointer-events: none; display: none; }
+  #hud b { color: #9ec9ff; }
+  #cross { position: absolute; top: 50%; left: 50%; width: 16px; height: 16px;
+           transform: translate(-8px,-8px); pointer-events: none; display: none; }
+  #cross::before, #cross::after { content: ""; position: absolute; background: #e6f0ff; opacity: .7; }
+  #cross::before { left: 7px; top: 0; width: 2px; height: 16px; }
+  #cross::after { top: 7px; left: 0; height: 2px; width: 16px; }
 </style>
 <header>
   <h1>AXIS engine — compiled C → WASM, rendering via WebGL</h1>
@@ -20,7 +29,11 @@
   arrows or I/J/K/L look, Shift sprint. Try <code>?map=CUBE</code>.</div>
 </header>
 <div id="wrap">
-  <canvas id="canvas" width="720" height="480"></canvas>
+  <div id="stage">
+    <canvas id="canvas" width="720" height="480"></canvas>
+    <div id="hud"></div>
+    <div id="cross"></div>
+  </div>
   <div id="row" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
     <button id="music" type="button" style="background:#1b2026;color:#cdd3da;border:1px solid #2a3139;border-radius:6px;padding:6px 12px;cursor:pointer">♪ Music</button>
     <span style="color:#6a727c;font-size:12px">click the canvas for mouse-look (pointer lock) · Esc to release</span>
@@ -174,6 +187,14 @@
           } catch (e) { /* leave map flat on any texture error */ }
         }
         if (placed >= 0 && qs.has('mp')) startMultiplayer(M, qs.get('mp'));
+        if (placed >= 0) {                              // walkable: show the HUD + crosshair
+          const hud = document.getElementById('hud'), cross = document.getElementById('cross');
+          const sim = qs.has('proj');
+          hud.style.display = 'block'; cross.style.display = 'block';
+          const base = `<b>${mapName}</b> &middot; ${placed} objects` + (sim ? ' &middot; <b>F</b> fire' : '');
+          hud.innerHTML = base;
+          if (sim) setInterval(() => { try { hud.innerHTML = base + ` &middot; pickups ${M.ccall('engine_pickups', 'number', [], [])}`; } catch (_) {} }, 250);
+        }
         if (placed >= 0 && qs.has('proj')) {           // ?proj -> run the reconstructed projectile sim in-engine
           M.ccall('engine_proj_demo', null, [], []);
           if (qs.has('fire')) setInterval(() => { try { M.ccall('engine_fire', null, [], []); } catch (_) {} }, 1000);
