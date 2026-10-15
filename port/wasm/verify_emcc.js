@@ -54,7 +54,7 @@ async function main() {
   const F = n => ex[n] || ex['_' + n];
   const decrypt = F('axis_decrypt'), encrypt = F('axis_encrypt'),
         decodeState = F('axis_decode_state'), encodeState = F('axis_encode_state'),
-        rngFill = F('axis_rng_fill');
+        rngFill = F('axis_rng_fill'), shpParse = F('axis_shp_parse');
   for (const [n, f] of [['axis_decrypt', decrypt], ['axis_encrypt', encrypt], ['axis_decode_state', decodeState], ['axis_encode_state', encodeState], ['axis_rng_fill', rngFill]])
     if (typeof f !== 'function') { console.error('missing export', n); process.exit(1); }
 
@@ -161,6 +161,64 @@ async function main() {
       let fp = 0; for (let i = 0; i < 4096; i++) if (pool[i] === file[i]) fp++;
       console.log(`rng-fill vs MATHFUNC.TBL: ${fp}/4096 match shipped game pool`);
       if (fp !== 4096) fails++;
+    }
+  }
+
+  // ---- axis_shp_parse: WASM mesh decoder vs web/shp.js over every Shape.dat record
+  const shapeDat = path.join(game, 'Data', 'Shape.dat');
+  if (typeof shpParse === 'function' && fs.existsSync(shapeDat)) {
+    let SHP;
+    try { SHP = require(path.join(__dirname, '..', '..', 'web', 'shp.js')); }
+    catch (e) { console.log('shp.js not loadable — skipping mesh check:', e.message); SHP = null; }
+    if (SHP) {
+      const raw = fs.readFileSync(shapeDat);
+      const ab = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
+      const toc = SHP.readTOC(ab);
+      // memory layout: file at FILE, output buffers above it (no grow inside loop)
+      const FILE = BASE;                                   // 16 MiB
+      const VCAP = 200000, TCAP = 400000, GCAP = 4096;
+      const POS = 0x1C00000, NRM = POS + VCAP * 12, UV = NRM + VCAP * 12,
+            TRI = UV + VCAP * 8, GRP = TRI + TCAP * 12, CNT = GRP + GCAP * 8;
+      ensure(CNT + 64);
+      new Uint8Array(memory.buffer).set(new Uint8Array(ab), FILE);
+      const buf = memory.buffer;
+      const posV = new Float32Array(buf, POS, VCAP * 3), nrmV = new Float32Array(buf, NRM, VCAP * 3),
+            uvV = new Float32Array(buf, UV, VCAP * 2), triV = new Uint32Array(buf, TRI, TCAP * 3),
+            grpV = new Uint32Array(buf, GRP, GCAP * 2), cntV = new Uint32Array(buf, CNT, 4);
+      const eqF = (a, b, n) => { for (let i = 0; i < n; i++) if (!Object.is(a[i], b[i])) return i; return -1; };
+
+      let ok = 0, bad = 0, rej = 0, over = 0, firstBad = null;
+      for (const t of toc) {
+        let js = null, threw = false;
+        try { js = SHP.parseShape(ab, t.off, t.end); } catch (e) { threw = true; }
+        const ret = shpParse(FILE, t.off, t.end, POS, NRM, UV, TRI, GRP, CNT);
+        if (threw) { if (ret === -1) rej++; else { bad++; firstBad = firstBad || `${t.name}: js threw but wasm ret ${ret}`; } continue; }
+        if (js.pos.length > VCAP || js.tris.length > TCAP || js.groups.length > GCAP) { over++; continue; }
+        const vt = cntV[0], tt = cntV[1], gc = cntV[2], cons = cntV[3];
+        let why = null;
+        if (ret !== 0) why = `ret ${ret}`;
+        else if (vt !== js.pos.length) why = `vcount ${vt}!=${js.pos.length}`;
+        else if (tt !== js.tris.length) why = `tcount ${tt}!=${js.tris.length}`;
+        else if (gc !== js.groups.length) why = `gcount ${gc}!=${js.groups.length}`;
+        else if (cons !== js.consumed) why = `consumed ${cons}!=${js.consumed}`;
+        if (!why) {
+          const jp = new Float32Array(vt * 3), jn = new Float32Array(vt * 3), ju = new Float32Array(vt * 2), jt = new Uint32Array(tt * 3);
+          for (let i = 0; i < vt; i++) { jp[i*3]=js.pos[i][0]; jp[i*3+1]=js.pos[i][1]; jp[i*3+2]=js.pos[i][2];
+            jn[i*3]=js.nrm[i][0]; jn[i*3+1]=js.nrm[i][1]; jn[i*3+2]=js.nrm[i][2]; ju[i*2]=js.uv[i][0]; ju[i*2+1]=js.uv[i][1]; }
+          for (let i = 0; i < tt; i++) { jt[i*3]=js.tris[i][0]; jt[i*3+1]=js.tris[i][1]; jt[i*3+2]=js.tris[i][2]; }
+          let bi;
+          if ((bi = eqF(posV, jp, vt*3)) >= 0) why = `pos[${bi}]`;
+          else if ((bi = eqF(nrmV, jn, vt*3)) >= 0) why = `nrm[${bi}]`;
+          else if ((bi = eqF(uvV, ju, vt*2)) >= 0) why = `uv[${bi}]`;
+          else if ((bi = eqF(triV, jt, tt*3)) >= 0) why = `tri[${bi}]`;
+          else for (let g = 0; g < gc && !why; g++) if (grpV[g*2] !== js.groups[g].triStart || grpV[g*2+1] !== js.groups[g].triEnd) why = `grp[${g}]`;
+        }
+        if (why) { bad++; firstBad = firstBad || `${t.name}: ${why}`; } else ok++;
+      }
+      console.log(`\nshp mesh decode: ${ok}/${toc.length} meshes byte-identical to web/shp.js` +
+        ` (${rej} rejected by both as non-mesh${over ? `, ${over} over cap` : ''}${bad ? `, ${bad} MISMATCH` : ''})`);
+      if (firstBad) console.log(`  first mismatch: ${firstBad}`);
+      fails += bad;
     }
   }
 
