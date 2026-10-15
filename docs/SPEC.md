@@ -270,14 +270,39 @@ fully consumed), then feed the vertex/normal/UV/index buffers to a WebGL viewer.
   bytes: name[0x40], toc_index@0x40, left@0x44, right@0x48). On a miss it picks the format
   by `this+0x110` (0/1/2 → extension at `PTR_DAT_004c5cfc` / `DAT_004c5d00`; else "invalid
   file format") and calls the mesh parser.
-- **`FUN_00464090(filename, offset, size)` = the actual mesh file parser** (vertices / faces
-  / UVs) — the next decompile target for real geometry; `FUN_004655c0` handles format type 2.
+- `FUN_00464090(name,off,size)` dispatches by extension: **`.shp`** (binary) → `FUN_004655c0`,
+  **`.obj`** (Wavefront) → `FUN_00464250`. Shape.dat blobs are `.shp`.
+
+### 2.8 .shp mesh format  (`FUN_004655c0`, Shape.dat is plaintext)
+
+```
+object header  0x4C bytes:
+    +0x10 i32 groupCount      +0x20 f32[3] bbox-seed      +0x30 u32 tag (0x71110300)
+groupCount × group header, 0x80 bytes each:
+    +0x34 i32 vertexCount     +0x50 f32[6] bbox (min xyz, max xyz)
+    (other group fields on disk are stale saved pointers, overwritten on load)
+then per group, in order:
+    positions  vc × vec3 (12B)     normals  vc × vec3 (12B)
+    attr       vc × 4B             uv       vc × 2×f32 (8B)
+    triangles  3 × u32 each        (read until indices leave [0,vc) — the empirical
+                                    reader; the on-disk face-group count field is a
+                                    stale pointer, same shift as vertexCount)
+```
+
+Verified: **948 / 948 single-group meshes parse with exact full byte-consumption**
+(e.g. `ALIEN\GIRL` 491 v / 520 tris renders correctly in `web/shape.html`). Multi-group
+meshes (795) need the inter-group padding pinned. Tools: `tools/parse_shp.py` (parse/inspect),
+`tools/export_shapes.py` (→ JSON). The decompile's group offsets (vc@0x4c, fgc@0x60) are
+shifted +0x18 from disk because the saved struct's pointer fields realign on load; the disk
+offsets above (vc@0x34) are what the bytes actually use.
 
 ## 4. Next analysis targets
 
-1. **`FUN_00464090`** — Shape mesh binary (vertices/faces/UVs/bones) → mesh extractor →
-   glTF → upgrade `web/map.html` to render real models instead of placeholder boxes.
-2. `.bfd` heightmap-patch byte layout (§2.5) for terrain maps that use it.
+1. Multi-group `.shp` inter-group padding → export the remaining 795 meshes; then wire
+   real meshes into `web/map.html` (place each object's shape at its position).
+2. `Skeleton.dat` + the `.shp` per-vertex attr/bone-weight → animation.
+3. `.bfd` heightmap-patch byte layout (§2.5) for terrain maps that use it.
+4. `WS2_32` protocol → server → online multiplayer; then the approach-B WASM build.
 3. `WinMain` / entry + main loop; GL draw style (immediate `glBegin` vs. vertex arrays).
 4. `WS2_32` send/recv call sites — multiplayer protocol → server reimplementation.
 5. (optional) full PTX block decoder for a standalone PNG extractor.

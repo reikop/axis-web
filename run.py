@@ -72,6 +72,13 @@ def main():
             json.dump(index, f)
         print(f"maps     : {len(index)} map layouts -> web/maps/")
 
+    # export mesh geometry from Shape.dat for the 3D mesh viewer
+    shape_dat = os.path.join(game, "Data", "Shape.dat")
+    if os.path.isfile(shape_dat):
+        subprocess.call([sys.executable, "-I",
+                         os.path.join(HERE, "tools", "export_shapes.py"),
+                         shape_dat, os.path.join(WEB, "shapes")])
+
     os.chdir(WEB)
     handler = http.server.SimpleHTTPRequestHandler
     socketserver.TCPServer.allow_reuse_address = True
