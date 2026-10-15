@@ -49,15 +49,15 @@ def parse(blob):
         p += vc * 4                       # attr
         uv = [struct.unpack_from("<ff", blob, p + i * 8) for i in range(vc)]
         p += vc * 8
-        # triangles follow as 3×u32; read while all three indices are valid (< vc).
-        # (the face-group header fields are saved pointers on disk; this empirical
-        #  reader recovers the triangle list robustly — the next group's vertex
-        #  floats decode as huge ints and stop it.)
+        # index region: triangles (3×u32, all < vc) interleaved with 12-byte
+        # face-group descriptors whose 3rd word is a stale saved heap pointer.
+        # Skip descriptors, collect triangles, stop at the next group's vertices.
         tri = []
         while p + 12 <= len(blob):
             a, b, c = struct.unpack_from("<III", blob, p)
             if a < vc and b < vc and c < vc:
-                tri.append((a, b, c))
+                tri.append((a, b, c)); p += 12
+            elif 0x04000000 < c < 0x40000000:      # face-group descriptor
                 p += 12
             else:
                 break

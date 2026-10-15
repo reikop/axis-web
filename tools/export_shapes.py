@@ -47,16 +47,22 @@ def main():
             r = parse_shp.parse(blob)
         except Exception:
             continue
-        if r["consumed"] != len(blob) or len(r["groups"]) != 1:
-            continue  # only fully-validated single-group meshes for now
-        g = r["groups"][0]
-        if g["vc"] == 0 or not g["tris"]:
+        if r["consumed"] != len(blob):
+            continue  # only fully byte-validated meshes
+        # merge all groups into one mesh, offsetting indices per group
+        pos, nrm, uv, tris = [], [], [], []
+        for g in r["groups"]:
+            base = len(pos)
+            pos += g["pos"]; nrm += g["nrm"]; uv += g["uv"]
+            tris += [(a + base, b + base, c + base) for (a, b, c) in g["tris"]]
+        if not pos or not tris:
             continue
         safe = name.replace("\\", "_").replace("/", "_")
         with open(os.path.join(out_dir, safe + ".json"), "w", encoding="utf-8") as f:
-            json.dump({"name": name, "pos": clean(g["pos"]), "nrm": clean(g["nrm"]),
-                       "uv": clean(g["uv"]), "tris": g["tris"]}, f, allow_nan=False)
-        index.append({"id": safe, "name": name, "v": g["vc"], "t": len(g["tris"])})
+            json.dump({"name": name, "pos": clean(pos), "nrm": clean(nrm),
+                       "uv": clean(uv), "tris": tris}, f, allow_nan=False)
+        index.append({"id": safe, "name": name, "v": len(pos), "t": len(tris),
+                      "g": len(r["groups"])})
         done += 1
         if limit and done >= limit:
             break
