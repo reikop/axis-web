@@ -1,0 +1,54 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>AXIS engine (WASM/WebGL)</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0a0b0d; color: #cdd3da; font: 14px/1.5 system-ui, sans-serif; }
+  header { padding: 10px 16px; border-bottom: 1px solid #222; }
+  h1 { font-size: 15px; margin: 0 0 2px; }
+  #sub { color: #8a929c; font-size: 12px; }
+  #wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 12px; }
+  canvas { background: #111417; border: 1px solid #262b31; max-width: 100%; touch-action: none; }
+  #status { font-size: 12px; color: #9aa3ad; min-height: 1.4em; }
+  a { color: #6fb3ff; }
+</style>
+<header>
+  <h1>AXIS engine — compiled C → WASM, rendering via WebGL</h1>
+  <div id="sub">A real Emscripten program (not the decoder reactor): <code>main()</code> opens a GLES2
+  context and renders an AXIS mesh decoded by the linked-in <code>axis_shp.c</code>. Your
+  <code>Data/Shape.dat</code> is fetched locally — nothing is uploaded.</div>
+</header>
+<div id="wrap">
+  <canvas id="canvas" width="720" height="480"></canvas>
+  <div id="status">loading WASM…</div>
+</div>
+<script src="axis_engine.js"></script>
+<script>
+  const statusEl = document.getElementById('status');
+  const canvas = document.getElementById('canvas');
+  // which Shape.dat record to show (?i=123)
+  const idx = (() => { const m = /[?&]i=(\d+)/.exec(location.search); return m ? (+m[1]) : 0; })();
+
+  AxisEngine({
+    canvas,
+    onRuntimeInitialized() {},
+  }).then(async (M) => {
+    statusEl.textContent = 'fetching Data/Shape.dat …';
+    let buf;
+    try {
+      const r = await fetch('/game/Data/Shape.dat');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      buf = new Uint8Array(await r.arrayBuffer());
+    } catch (e) {
+      statusEl.textContent = 'could not fetch /game/Data/Shape.dat (run via run.py). ' + e.message;
+      return;
+    }
+    const ptr = M.ccall('engine_alloc', 'number', ['number'], [buf.length]);
+    M.HEAPU8.set(buf, ptr);
+    const groups = M.ccall('engine_load_mesh', 'number', ['number', 'number', 'number'], [ptr, buf.length, idx]);
+    M.ccall('engine_free', null, ['number'], [ptr]);
+    statusEl.textContent = groups >= 0
+      ? `rendering Shape.dat record #${idx} — ${groups} group(s). WASM backend, WebGL. (?i=N for other meshes)`
+      : `engine_load_mesh failed (code ${groups}) for record #${idx}`;
+  }).catch(e => { statusEl.textContent = 'WASM init failed: ' + e.message; });
+</script>

@@ -47,6 +47,8 @@ __pycache__/
 *.wasm
 *.o
 *.a
+# Emscripten-generated glue for the engine harness (artifact; rebuild with port/build_engine.sh)
+/web/engine/axis_engine.js
 
 # editor / OS
 .DS_Store
