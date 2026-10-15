@@ -216,6 +216,10 @@ async function main() {
     let raw = fr(fr(s.yaw || 0) * 10); if (raw < 0) raw = fr(raw + 3600); o[0x0c] = Math.trunc(fr(raw / fr(14.0625))) & 0xff; return o; }
   // shared lockstep RNG pool (MSVC rand, srand(1)); SPEC §5. Same values as MATHFUNC.TBL.
   function jsRngPool() { let s = 1 >>> 0; const a = new Uint32Array(4096); for (let i = 0; i < 4096; i++) { s = (Math.imul(s, 214013) + 2531011) >>> 0; a[i] = (s >>> 16) & 0x7fff; } return a; }
+  // the game's draw operation over the shared pool: pool[idx++ & 0xfff] % N (SPEC §5).
+  // Two peers that start at the same index and draw in the same order get the same values.
+  function makeRng(pool, start) { let idx = (start | 0) >>> 0;
+    return { draw(n) { const v = pool[idx++ & 0xfff]; return n ? (v % n) >>> 0 : v; }, get index() { return idx & 0xfff; }, set index(i) { idx = (i | 0) >>> 0; } }; }
   let mod = null;
   async function load() {
     if (mod) return mod;
@@ -236,14 +240,14 @@ async function main() {
         new Uint8Array(mem.buffer, KB, 64).fill(0); ex.axis_encode_state(SB, KB); return new Uint8Array(mem.buffer).slice(KB, KB + 64); };
       const RB = 1 << 21;
       const rngPool = () => { ex.axis_rng_fill(RB); return new Uint32Array(mem.buffer.slice(RB, RB + 4096 * 4)); };
-      mod = { decrypt: run(ex.axis_decrypt), encrypt: run(ex.axis_encrypt), decodeState, encodeState, rngPool, backend: 'wasm' };
+      mod = { decrypt: run(ex.axis_decrypt), encrypt: run(ex.axis_encrypt), decodeState, encodeState, rngPool, rng: start => makeRng(rngPool(), start || 0), backend: 'wasm' };
     } catch (e) {
-      mod = { decrypt: jsDecrypt, encrypt: jsEncrypt, decodeState: jsDecodeState, encodeState: jsEncodeState, rngPool: jsRngPool, backend: 'js' };
+      mod = { decrypt: jsDecrypt, encrypt: jsEncrypt, decodeState: jsDecodeState, encodeState: jsEncodeState, rngPool: jsRngPool, rng: start => makeRng(jsRngPool(), start || 0), backend: 'js' };
     }
     return mod;
   }
-  root.AXISCrypt = { load, jsDecrypt, jsEncrypt, jsDecodeState, jsEncodeState, jsRngPool };
-  if (typeof module !== 'undefined' && module.exports) module.exports = { load, jsDecrypt, jsEncrypt, jsDecodeState, jsEncodeState, jsRngPool };
+  root.AXISCrypt = { load, jsDecrypt, jsEncrypt, jsDecodeState, jsEncodeState, jsRngPool, makeRng };
+  if (typeof module !== 'undefined' && module.exports) module.exports = { load, jsDecrypt, jsEncrypt, jsDecodeState, jsEncodeState, jsRngPool, makeRng };
 })(typeof window !== 'undefined' ? window : globalThis);
 `;
   const cryptPath = path.join(__dirname, '..', '..', 'web', 'crypt.js');
