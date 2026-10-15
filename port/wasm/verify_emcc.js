@@ -54,7 +54,8 @@ async function main() {
   const F = n => ex[n] || ex['_' + n];
   const decrypt = F('axis_decrypt'), encrypt = F('axis_encrypt'),
         decodeState = F('axis_decode_state'), encodeState = F('axis_encode_state'),
-        rngFill = F('axis_rng_fill'), shpParse = F('axis_shp_parse'), bfdExtract = F('axis_bfd_extract');
+        rngFill = F('axis_rng_fill'), shpParse = F('axis_shp_parse'), bfdExtract = F('axis_bfd_extract'),
+        ptxDecode = F('axis_ptx_decode');
   for (const [n, f] of [['axis_decrypt', decrypt], ['axis_encrypt', encrypt], ['axis_decode_state', decodeState], ['axis_encode_state', encodeState], ['axis_rng_fill', rngFill]])
     if (typeof f !== 'function') { console.error('missing export', n); process.exit(1); }
 
@@ -255,6 +256,56 @@ async function main() {
         if (why) { bad++; firstBad = firstBad || `${fn}: ${why}`; } else ok++;
       }
       console.log(`\nbfd map decode : ${ok}/${nmaps} maps byte-identical to web/bfd.js (version+count+all object positions)${bad ? `, ${bad} MISMATCH` : ''}`);
+      if (firstBad) console.log(`  first mismatch: ${firstBad}`);
+      fails += bad;
+    }
+  }
+
+  // ---- axis_ptx_decode: WASM texture decoder vs web/ptx.js over real Image*.dat PTX entries
+  const exeFile = path.join(game, 'AXIS.EXE');
+  if (typeof ptxDecode === 'function' && fs.existsSync(exeFile)) {
+    let PTX, SHP2;
+    try { PTX = require(path.join(__dirname, '..', '..', 'web', 'ptx.js')); SHP2 = require(path.join(__dirname, '..', '..', 'web', 'shp.js')); }
+    catch (e) { console.log('ptx.js/shp.js not loadable — skipping texture check:', e.message); PTX = null; }
+    if (PTX) {
+      const exeRaw = fs.readFileSync(exeFile);
+      const exeAb = exeRaw.buffer.slice(exeRaw.byteOffset, exeRaw.byteOffset + exeRaw.byteLength);
+      const EXEB = 0x1000000, PTXB = 0x1800000, RGBAB = 0x1900000, WHB = 0x1E00000;
+      ensure(WHB + 64);
+      new Uint8Array(memory.buffer).set(new Uint8Array(exeAb), EXEB);
+      const exeU8 = new Uint8Array(exeAb);
+      let ok = 0, bad = 0, nonptx = 0, tested = 0, firstBad = null;
+      const PER = 15;                                   // sample per Image archive (keeps JS runtime sane)
+      for (let n = 0; n < 6; n++) {
+        const dat = path.join(game, 'Data', `Image${n}.dat`);
+        if (!fs.existsSync(dat)) continue;
+        const raw = fs.readFileSync(dat);
+        const ab = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
+        const toc = SHP2.readTOC(ab);
+        for (let i = 0; i < toc.length && i < PER; i++) {
+          const t = toc[i];
+          const slice = ab.slice(t.off, t.end);
+          const sU8 = new Uint8Array(slice);
+          if (!(sU8[0] === 0x50 && sU8[1] === 0x54 && sU8[2] === 0x58 && sU8[3] === 0)) { nonptx++; continue; }
+          let js;
+          try { js = PTX.decodePTX(slice, exeU8); } catch (e) { nonptx++; continue; }
+          if (js.w * js.h > 1024 * 1024) continue;
+          new Uint8Array(memory.buffer).set(sU8, PTXB);
+          const ret = ptxDecode(PTXB, sU8.length, EXEB, exeU8.length, RGBAB, WHB);
+          tested++;
+          const wh = new Uint32Array(memory.buffer, WHB, 2);
+          let why = null;
+          if (ret !== 0) why = `ret ${ret}`;
+          else if (wh[0] !== js.w || wh[1] !== js.h) why = `dims ${wh[0]}x${wh[1]}!=${js.w}x${js.h}`;
+          else {
+            const got = new Uint8Array(memory.buffer, RGBAB, js.w * js.h * 4);
+            const jr = js.rgba;
+            for (let k = 0; k < jr.length; k++) if (got[k] !== jr[k]) { why = `rgba[${k}] ${got[k]}!=${jr[k]}`; break; }
+          }
+          if (why) { bad++; firstBad = firstBad || `Image${n}/${t.name}: ${why}`; } else ok++;
+        }
+      }
+      console.log(`\nptx texture decode: ${ok}/${tested} textures byte-identical to web/ptx.js (${nonptx} non-PTX entries skipped)${bad ? `, ${bad} MISMATCH` : ''}`);
       if (firstBad) console.log(`  first mismatch: ${firstBad}`);
       fails += bad;
     }
