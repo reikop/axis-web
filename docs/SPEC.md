@@ -765,6 +765,37 @@ sticks it; trail cadence ≈ 10 emissions / s; and over 100 000 draws of the ver
 pool the kind-2 fraction is ≈ 1/10. So type A is a **finished verified layer**; the collision test it
 plugs into is the shared `FUN_00470bc0` map-geometry subsystem (still open, needs the collision mesh).
 
+**Entity type C = `FUN_0048f8d0` (animated / interactive props), pure pieces reconstructed + verified
+(2026-10-16).** Dispatched by `FUN_004901d0` (record stride `0x2cc`, array `0x131ae48`, count
+`0x13c9b24`). Type C drives animated and interactive set pieces — doors, lifts/platforms, proximity
+triggers and screen-space glow sprites (lens flares). Record slots: `+0x298` phase, `+0x29c` rate,
+`+0x2a0` loop mode (1 = clamp, 2 = random re-roll, 3 = one-shot), `+0x2a4` dirty flag, `+0x0c` behaviour
+bits (`&1` glow, `&2` no-draw, `&8` proximity-to-actors, `&0x10` timer), `+0x10` activation range (in
+100-unit steps), `+0x14` play speed (×0.001), `+0x58..0x60` world position, `+0x2a8` glow alpha,
+`+0x2ac..0x2b8` projected clip-space point, `+0x2c8` timer accumulator. Flow: advance phase → if dirty
+rebuild local→world matrices (`FUN_00469fb0`/`FUN_0047c800`/`FUN_0047cbc0`) and draw (`FUN_00465db0`);
+if glow bit, project position by the view-proj matrix at `in_ECX+0x20f3a74`, cull, fade a glow sprite
+(`FUN_00478dd0` kind 4); if proximity/timer bit, scan actors (`count 0x202e8c8`, blocks stride `0x8888`
+= `0x2222` floats, active flag = the denormal `0x00000001`), and trigger open/close via `FUN_00490280`.
+The matrix rebuild + draw is render work; the **pure, offline-verifiable pieces are reconstructed as
+clean original C in `port/sim/axis_prop.c`**:
+- *Phase advance + loop modes* — mode 1 CLAMP (hold at top, stop + notify at bottom), mode 3 ONESHOT
+  (reset to 0 + stop + notify at either end); rate zeroed at a stop; mode 2 is a float10 random re-roll
+  left to the caller (not WASM-reproducible).
+- *Proximity activation* — radius² = `(range·100)²`; "inside" iff `dist² < radius²` (idle stays while
+  `radius² ≤ dist²`); plus the nearest-active-actor squared-distance scan.
+- *Glow visibility fade* — alpha toward 1 while on-screen+unoccluded, toward 0 otherwise, at **4/sec**,
+  clamped `[0,1]`.
+- *Clip-space visibility* — the standard `-w ≤ x,y,z ≤ w` frustum test (culls on `≤`, matching the
+  binary).
+`port/sim/axis_prop_test.c` (native `cc`, ALL PASS; `emcc`-clean) verifies each: phase stays in-range /
+clamps / resets / notifies / zeroes rate; radius² and the strict-inside boundary; the actor scan skips
+inactive and returns the minimum; glow ramps ±4/sec and clamps; and the clip test on centre / in-cube /
+out-of-bounds points. The actor scan plugs into the live actor array; the collision occlusion test is
+again the shared `FUN_00470bc0` map-geometry subsystem (still open). So both non-actor per-entity
+categories (type A effects, type C props) now have their offline-verifiable logic reconstructed +
+verified; what remains is actor (player/mech) movement physics and the `FUN_00470bc0` collision mesh.
+
 **Two hard constraints on finishing the per-entity physics** (`FUN_00479750` et al.):
 1. *No offline ground-truth* — replays carry player state only (above).
 2. *x87 80-bit intermediates* — the decompile shows `float10` (x87 extended precision) temporaries in
