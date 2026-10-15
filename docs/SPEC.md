@@ -508,10 +508,23 @@ by `run.py` at `/game/`; `web/audio.json` holds only filenames — no audio is c
    mapped; a `tools/`-side `.ape` replay decoder + the `server/relay.js` relay already
    implement this model end-to-end (verified two-client shared-map multiplayer in the browser,
    see `../server/README.md`). **All 6 outbound packet builders are now decoded** (the
-   catalogue above), so the outbound protocol is fully mapped. Remaining for
-   server-authoritative play: the inbound *application* of each packet (how a received type-1
-   input + RNG advances the deterministic combat/damage sim) — i.e. the game simulation itself,
-   not the wire format.
+   catalogue above), so the outbound protocol is fully mapped.
+
+   **Inbound application (`FUN_0048bca0`), decoded — the counterpart to the builders.** The
+   network tick `FUN_00497d70` drains packets in a loop: `recv (FUN_004a7ab0)` returns type
+   1 (normal) → `FUN_0048bca0(payload,…)` applies it; type 2 (relayed) is re-sent inside recv.
+   `FUN_0048bca0` is `switch(payload[1])` over the same types 0..14. The **type-0 apply**
+   (verified, and it confirms the builder exactly) reads `actor = payload[4]>>4`, position
+   int16 at `[5]/[7]/[9]`, then writes the actor's world transform with the real **unit scales**:
+   * **position = int16 × 10.0** (so replay/`ape.js` coords are the raw int16 ×10 = true world units),
+   * yaw/pitch = `byte × 14.0625` wrapped to ±1800, velocity = `byte × 0.1`, trim nibbles × 1/15,
+   * then the five 9-byte weapon/turret sub-records (flags, target id, 3 aim shorts ×10) — the
+     same layout the builder emits. The **type-1 apply** nests `switch(payload[0x2b])` on the
+     RNG stream selector, advancing the shared table — the determinism hook.
+   So both directions of every packet type are mapped. Remaining for server-authoritative play
+   is the rest of the per-tick simulation the dispatcher feeds (`FUN_004962d0`, `FUN_0047c480`,
+   `FUN_00478f10`, `FUN_0048e220`, `FUN_004901d0`, `FUN_0048f1e0` — movement/physics/weapons/
+   damage) — i.e. the game simulation itself, not the wire format.
 5. (optional) full PTX block decoder for a standalone PNG extractor — done (`tools/ptx_decode.py`).
 
 See `../port/README.md` for how these feed the approach-B WASM build.

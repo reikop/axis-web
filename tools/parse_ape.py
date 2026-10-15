@@ -31,7 +31,7 @@ import struct
 
 REC = 76
 PAY = 12
-POS_SCALE = 1.0          # type-0 coords are already world units (int16)
+POS_SCALE = 10           # type-0 coords are int16; apply side (FUN_0048bca0) does *10.0
 
 
 def _dec(b):
@@ -76,7 +76,8 @@ def parse(raw):
         if t == 0:                                   # state snapshot -> trajectory
             actor = pay[4] >> 4
             x, y, z = struct.unpack_from("<hhh", pay, 5)
-            tracks.setdefault(actor, []).append([tick, x, y, z])
+            tracks.setdefault(actor, []).append(
+                [tick, x * POS_SCALE, y * POS_SCALE, z * POS_SCALE])
         elif t == 2:                                 # identity -> name
             raw_name = pay[2:19].split(b"\x00")[0]
             try:

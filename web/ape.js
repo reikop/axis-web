@@ -60,7 +60,8 @@
       types[t] = (types[t] || 0) + 1;
       if (t === 0) {
         const actor = u8[p + 4] >> 4;
-        const x = dv.getInt16(p + 5, true), y = dv.getInt16(p + 7, true), z = dv.getInt16(p + 9, true);
+        // int16 world coords; the engine's apply side (FUN_0048bca0) scales by 10
+        const x = dv.getInt16(p + 5, true) * 10, y = dv.getInt16(p + 7, true) * 10, z = dv.getInt16(p + 9, true) * 10;
         (tracks[actor] || (tracks[actor] = [])).push([tick, x, y, z]);
       } else if (t === 2) {
         const nm = name(u8, p + 2, 17);
