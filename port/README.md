@@ -27,11 +27,30 @@ emcc: `node wasm/build_wasm.js <game_dir>` hand-assembles a byte-identical modul
 toolchain (same checks pass), emits `web/crypt.js` (module embedded for the browser), and
 `web/wasm.html` shows it running in-browser with the **WASM** backend (all PASS, 0 errors).
 
-`wasm/axis.wasm` is a build artifact and is gitignored (regenerate with `build.sh`). What remains
-for a *playable* port is not more decoders but the two pieces this environment can't finish and
-verify offline: the platform **shim** + main loop (GL/window/input/audio/sockets — the table
-below), and the behaviour-exact **per-tick simulation**, which needs ground-truth from a live
-match the dead-server install can't reach (see `../docs/SPEC.md` §5 and §2.9).
+`wasm/axis.wasm` is a build artifact and is gitignored (regenerate with `build.sh`).
+
+### Engine harness — the platform shim has started (compiled C → WASM → WebGL)
+
+Beyond the decoder reactor, `engine/axis_engine.c` is a **real Emscripten program**: `main()` opens
+a WebGL/GLES2 context through Emscripten's GL→WebGL layer and an emscripten main loop renders actual
+AXIS geometry decoded by the linked-in, byte-exact `axis_shp.c`. Build it with `./build_engine.sh`
+(emcc `FULL_ES2`, ~22 KB wasm + ~42 KB glue, both gitignored); it serves at `web/engine/index.html`
+(linked from the home hub), fetching the user's own files — nothing bundled. Verified in a browser
+(headless Chrome, SwiftShader WebGL):
+
+- `?i=N` decodes and renders one Shape.dat mesh;
+- `?map=CUBE` decrypts a `Map/*.bfd`, matches each placed object's name to a Shape.dat record the
+  way `web/map.html` does, decodes the mesh, positions it, and renders the whole arena (68 objects
+  for CUBE) — screenshot-verified, no page errors;
+- a first-person camera with WASD / look controls makes it walkable (camera render verified; the
+  key-hold input isn't separately captured in headless).
+
+So the reconstruction now runs as compiled code driving real GPU rendering, not only as decoders.
+**What's left for a *playable* port:** the rest of the shim — textures in the engine (link
+`axis_ptx.c`), audio (WebAudio), networking (WebSocket, protocol already mapped in §4), and
+pointer-lock mouse — then the behaviour-exact **per-tick simulation**, which needs ground-truth
+from a live match the dead-server install can't reach (see `../docs/SPEC.md` §5 and §2.9). The
+simulation is the one genuinely blocked pillar; the shim is now underway and buildable here.
 
 ---
 
