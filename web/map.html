@@ -57,13 +57,16 @@
   </aside>
   <div class="view"><canvas id="c"></canvas><div class="hud" id="hud"></div></div>
 </div>
+<script src="shp.js"></script>
+<script src="bfd.js"></script>
 <script>
 const cv=document.getElementById("c"),ctx=cv.getContext("2d"),hud=document.getElementById("hud");
 let DPR=Math.min(devicePixelRatio||1,2);
 let objs=[], instances=[], center=[0,0,0], ext=1000;
 let yaw=0.7, pitch=0.5, dist=2.4, useMesh=true, wire=false;
-let SHIDX={};                 // lowercase id -> real id
+let SHIDX={};                 // lowercase id -> real id (JSON mode)
 const meshCache=new Map();
+const LIVE={on:false, shapeAB:null, byLower:{}};   // in-browser decode straight from game files
 
 function resize(){DPR=Math.min(devicePixelRatio||1,2);cv.width=cv.clientWidth*DPR;cv.height=cv.clientHeight*DPR;draw();}
 addEventListener("resize",resize);
@@ -158,6 +161,15 @@ function centroid(pos){let c=[0,0,0];for(const p of pos){c[0]+=p[0];c[1]+=p[1];c
   const n=pos.length||1;return [c[0]/n,c[1]/n,c[2]/n];}
 
 async function getMesh(id){ if(meshCache.has(id))return meshCache.get(id);
+  if(LIVE.on){                       // decode straight from Shape.dat via shp.js
+    const e=LIVE.byLower[id.toLowerCase()];
+    if(!e){meshCache.set(id,null);return null;}
+    try{ const r=window.AXISShape.parseShape(LIVE.shapeAB,e.off,e.end);
+      if(!r.pos.length||!r.tris.length){meshCache.set(id,null);return null;}
+      const m={pos:r.pos,nrm:r.nrm,uv:r.uv,tris:r.tris,centroid:centroid(r.pos)};
+      meshCache.set(id,m); return m; }
+    catch(err){ meshCache.set(id,null); return null; }
+  }
   const real=SHIDX[id.toLowerCase()]; if(!real){meshCache.set(id,null);return null;}
   try{ const m=await (await fetch("shapes/"+real+".json")).json();
     m.centroid=centroid(m.pos); meshCache.set(id,m); return m; }
@@ -165,7 +177,10 @@ async function getMesh(id){ if(meshCache.has(id))return meshCache.get(id);
 }
 
 async function loadMap(name){
-  const d=await (await fetch("maps/"+name+".json")).json();
+  let d;
+  if(LIVE.on){ const ab=await (await fetch("/game/Map/"+name+".bfd")).arrayBuffer();
+    const m=window.AXISMap.extractMap(ab); d={map:name,count:m.count,objects:m.objects}; }
+  else { d=await (await fetch("maps/"+name+".json")).json(); }
   objs=d.objects||[];
   const fams=[...new Set(objs.map(o=>family(o.name)))].sort();
   const fc={}; fams.forEach((f,i)=>fc[f]=hcol(i,fams.length));
@@ -248,11 +263,7 @@ document.getElementById("mpbtn").addEventListener("click",mpConnect);
 // drop stale players
 setInterval(()=>{const now=Date.now();let ch=false;for(const[id,p]of MP.players)if(now-p.t>4000){MP.players.delete(id);ch=true;}if(ch)draw();},2000);
 
-Promise.all([
-  fetch("shapes/index.json").then(r=>r.ok?r.json():[]).catch(()=>[]),
-  fetch("maps/index.json").then(r=>r.json())
-]).then(([shapes,list])=>{
-  for(const e of shapes){const id=typeof e==="string"?e:e.id; SHIDX[id.toLowerCase()]=id;}
+function startWith(list){
   const sel=document.getElementById("mapsel");
   sel.innerHTML=list.map(n=>`<option>${n}</option>`).join("");
   let start=list[0];
@@ -260,7 +271,27 @@ Promise.all([
   const q=new URLSearchParams(location.search).get("map"); if(q&&list.includes(q))start=q;
   sel.value=start; sel.addEventListener("change",()=>loadMap(sel.value));
   resize(); loadMap(start);
-}).catch(()=>{ resize(); hud.textContent="Run `python run.py` first."; });
+}
+async function initLive(){
+  const ab=await (await fetch("/game/Data/Shape.dat")).arrayBuffer();
+  LIVE.on=true; LIVE.shapeAB=ab;
+  for(const e of window.AXISShape.readTOC(ab)) LIVE.byLower[e.name.replace(/[\\/]/g,"_").toLowerCase()]=e;
+  // map list from the /game/Map/ directory listing
+  const html=await (await fetch("/game/Map/")).text();
+  const maps=[...html.matchAll(/href="([^"]+?)\.bfd"/gi)].map(m=>decodeURIComponent(m[1])).filter((v,i,a)=>a.indexOf(v)===i).sort();
+  document.querySelector(".sub").textContent="live from decrypted .bfd + Shape.dat (bfd.js/shp.js)";
+  startWith(maps);
+}
+function initJSON(){
+  Promise.all([
+    fetch("shapes/index.json").then(r=>r.ok?r.json():[]).catch(()=>[]),
+    fetch("maps/index.json").then(r=>r.json())
+  ]).then(([shapes,list])=>{
+    for(const e of shapes){const id=typeof e==="string"?e:e.id; SHIDX[id.toLowerCase()]=id;}
+    startWith(list);
+  }).catch(()=>{ resize(); hud.textContent="Run `python run.py` first."; });
+}
+fetch("/game/Data/Shape.dat",{method:"HEAD"}).then(r=>{ if(r.ok&&window.AXISShape&&window.AXISMap) initLive().catch(initJSON); else initJSON(); }).catch(initJSON);
 </script>
 </body>
 </html>
