@@ -421,23 +421,42 @@ with verified keyframe playback + that skin binding the meshes can be deformed a
    fields, the socket send (`FUN_00450700`), and the recv/dispatch (packet-type → handler).
 
    **Six send sites** call `pnSendPacketData` (`0x48d080, 0x48d580, 0x48d750, 0x48db10,
-   0x48de20, 0x48df60`) — the outbound message types. The player-action packet
-   (`FUN_0048d080`) fills a 64-byte struct: `[+1]=1`, `[+2]=actor id`, team/colour bytes,
-   `[+0x09]` position (2×f32), orientation shorts, per-slot fire/action bitmasks
-   (`local_27`/`local_23`), plus RNG-table "checksum" words (anti-cheat). **Key link:** the
-   same 64-byte payload is also written to the `AutoPlay\*.ape` file via the encrypted write
-   `FUN_0046c0b0` — so **`.ape` replays are recorded packet streams** (decryptable with
-   §2.3), giving real protocol samples without a live server. **Validated:**
-   `Autoplay001.ape` (539 KB) decrypts whole (version `0x1201`) and contains the per-tick
-   64-byte player records. **Record format (verified):** after a ~60-byte header the file is
-   a stream of **76-byte records** `[u32 seq][u32 ?][u32 0x40][64-byte payload]` (12+64), the
-   same packets the game sends. Parsing `Autoplay001.ape` yields ~7,000 records and **three
-   real players** (actors 0,1,2). Tool: `tools/parse_ape.py`. **Still ambiguous:** the
-   per-opcode payload layout — `payload[0]` is an opcode (0xFF dominates = idle/keepalive
-   slots; others 9/12/70/71/124/125…) and the moving XY/Z position does not sit at one fixed
-   payload offset across types, so clean movement trajectories need the playback code (how
-   each record is applied to an actor) reversed or a dynamic trace. (Not guessed here — a
-   wrong offset would replay avatars at garbage positions.)
+   0x48de20, 0x48df60`) — the outbound message types. **Player-action packet
+   (`FUN_0048d080`) — full 64-byte payload layout decoded from the builder and VALIDATED
+   against the replays:**
+
+   | off | type | field |
+   |----:|------|-------|
+   | 1   | u8   | packet type = **1** (player action) |
+   | 2   | u8   | actor id (0..15) |
+   | 3..8| u8×6 | appearance / colour (all `0xFF` while the slot is inactive) |
+   | 9   | f32  | global aim/view A (`0x22f0408`) |
+   | 13  | f32  | global aim/view B (`0x22f040c`) |
+   | 17  | f32  | per-actor input A (`0x1eccb6c + actor*0x8888`) |
+   | 21  | f32  | per-actor input B (`0x1eccb70 + actor*0x8888`) |
+   | 25  | u16  | action/fire bitmask 1 (one bit per 0..15 channel, built in the 0x10 loop) |
+   | 29  | u16  | action/fire bitmask 2 |
+   | 33..42 | u16×5 | aim/angle shorts |
+   | 43  | u8   | RNG stream selector (`counter % 5`) |
+   | 44..55 | | RNG sync block — 5 draws from the shared table `DAT_00a11bc8[0x1000]` (idx `DAT_00a20488`) |
+
+   **Architecture finding (verified): input-based deterministic lockstep.** The four
+   floats are small **normalised values (0..1), never world coordinates** (maps span ±1e4+),
+   and every action packet carries RNG samples from a shared table. So peers exchange control
+   **inputs + action bits + RNG draws** and each runs the *identical deterministic simulation*
+   — positions are simulated locally, not replicated. (This is why no fixed payload offset
+   holds a world XY/Z: there isn't one.) Consequence for the port: faithful online play needs
+   the deterministic sim (the same code the WASM build reconstructs); our `server/relay.js`
+   instead shares positions directly as a pragmatic browser substitute.
+
+   **Key link:** the same 64-byte payload is also written to `AutoPlay\*.ape` via the
+   encrypted write `FUN_0046c0b0` — so **`.ape` replays are recorded packet streams**
+   (decryptable with §2.3). **Record format (verified):** a ~60-byte header then a stream of
+   **76-byte records** `[u32 tick][u32 arg][u32 0x40][64-byte payload]` (12+64). All three
+   `AutoPlay\*.ape` decrypt whole (version `0x1201`); each has **three real players**
+   (actors 0,1,2) and a consistent type histogram — type **0** idle/keepalive (~96%),
+   **1** player-action, **2** event, **12** session. Tool: `tools/parse_ape.py` (decodes the
+   validated layout: per-actor input vectors + action bitmasks + type census).
 
    **Recv/dispatch** (`FUN_004a7ab0`): dequeues 64-byte packets from the per-channel ring
    buffers (`DAT_00af0b70`, 0x10 channels × 0x80 slots × 0x40 bytes), tracking per-channel
