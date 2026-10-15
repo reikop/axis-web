@@ -657,9 +657,28 @@ byte-exact against the JS/Python references on the real game files by `port/wasm
 `axis_shp` (mesh 1743/1743), `axis_bfd` (maps 40/40), `axis_ptx` (textures 87/87), `axis_skel`
 (rigs 232/232), `axis_ape` (replays 4/4). The PTX decoder reaches byte-exactness by embedding the
 IDCT basis as exact 64-bit patterns + `-ffp-contract=off` (wasm has no FMA), so its float pipeline
-rounds identically to the reference. What remains for a *playable* port is the platform shim +
-main loop (GL/window/input/audio/sockets) and the behaviour-exact per-tick simulation above —
-the simulation blocked not by tooling now but by ground-truth (a live match the offline install
-can't reach).
+rounds identically to the reference.
+
+**Platform shim DONE (2026-10-16).** `port/engine/axis_engine.c` compiles to a WebGL/WASM engine
+(see `../port/README.md`): it renders real maps and meshes (decoded by the linked-in byte-exact
+reconstructions), textured per object (`SHAPE\<name>` skins via `axis_ptx.c`), walkable (WASD +
+pointer-lock), with music audio and **real-protocol multiplayer** (the §4 type-0 wire codec via
+`crypt.js`, verified against `server/relay.js` + a ghost). Every shim pillar — GL, window/loop,
+keyboard, mouse, audio, textures, networking — is implemented and verified clean (0 page-errors).
+
+**Movement model reconstructed + VERIFIED against replays (the one sim piece replays can
+ground-truth).** The *deterministic combat* sim still can't be verified here (it runs only in a
+live match — above), but the replays record every actor's real world position each tick, so they
+are ground-truth for how positions evolve. `tools/verify_motion.js` fits three kinematic
+predictors to all `AutoPlay/*.ape` trajectories (27,497 samples, 4 replays): a **constant-velocity**
+integrator cuts the median next-sample error ~4.1× below no-model (**≈172 vs ≈710 world-units**,
+against ≈787-unit moves), and constant-acceleration adds **no** improvement (median 160 but worse
+tails). So AXIS motion is **inertial / constant-velocity dead-reckoning between state snapshots**,
+with the authoritative position correcting the residual — consistent with the state-replication
+model (§4). The engine applies exactly this to tween remote players between packets. What stays
+unverifiable offline is the rest of the per-tick sim (input→acceleration, collision, weapons,
+damage): those run only on the authoritative side inside a live match, which the dead-server
+install can't reach, so there is no ground-truth to check a reconstruction against — left honestly
+unfinished rather than guessed.
 
 See `../port/README.md` for how these feed the approach-B WASM build.

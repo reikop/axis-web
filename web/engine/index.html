@@ -68,19 +68,34 @@
     const AVN = 16, avPtr = M.ccall('engine_alloc', 'number', ['number'], [AVN * 3 * 4]);
     let mySlot = -1; const latest = {};
     const self = { x: -1875, y: 6001, z: 5056 };          // demo self-position (CUBE center-ish)
-    function pushAvatars() {
-      const f = new Float32Array(M.HEAPU8.buffer, avPtr, AVN * 3);
-      let n = 0;
-      for (const a of Object.keys(latest)) { if (+a === mySlot || n >= AVN) continue; const p = latest[a]; f[n*3]=p[0]; f[n*3+1]=p[1]; f[n*3+2]=p[2]; n++; }
-      M.ccall('engine_set_avatars', null, ['number', 'number'], [avPtr, n]);
-      statusEl.textContent = `map ${mapName} · multiplayer: ${n} remote player(s) via ${url} (real type-0 codec, backend=${codec.backend})`;
+    // apply the replay-verified movement model (SPEC §5, tools/verify_motion.js):
+    // tween remote players with constant-velocity dead-reckoning between packets.
+    const EXP = 100, CAP = 1.5;                            // extrapolation window (ms) / cap
+    function onPacket(actor, pos) {
+      const a = latest[actor];
+      if (a) { a.p0 = a.p1; a.p1 = pos; a.t = performance.now(); }
+      else latest[actor] = { p1: pos, p0: null, t: performance.now() };
     }
+    function tick() {
+      const now = performance.now(), f = new Float32Array(M.HEAPU8.buffer, avPtr, AVN * 3);
+      let n = 0;
+      for (const k of Object.keys(latest)) {
+        if (+k === mySlot || n >= AVN) continue;
+        const a = latest[k]; let p = a.p1;
+        if (a.p0) { const fr = Math.min((now - a.t) / EXP, CAP); p = [a.p1[0]+(a.p1[0]-a.p0[0])*fr, a.p1[1]+(a.p1[1]-a.p0[1])*fr, a.p1[2]+(a.p1[2]-a.p0[2])*fr]; }
+        f[n*3]=p[0]; f[n*3+1]=p[1]; f[n*3+2]=p[2]; n++;
+      }
+      M.ccall('engine_set_avatars', null, ['number', 'number'], [avPtr, n]);
+      statusEl.textContent = `map ${mapName} · multiplayer: ${n} remote player(s) via ${url} (real type-0 codec, backend=${codec.backend}; const-velocity dead-reckoning)`;
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
     let ws; try { ws = new WebSocket(url); } catch (e) { return; }
     ws.binaryType = 'arraybuffer';
     ws.onmessage = (ev) => {
       const d = new Uint8Array(ev.data);
       if (d.length === 2 && d[0] === 0xff) { mySlot = d[1]; return; }
-      if (d.length === 69) { const actor = d[4]; const s = codec.decodeState(d.subarray(5, 69)); latest[actor] = [s.x, s.y, s.z]; pushAvatars(); }
+      if (d.length === 69) { const actor = d[4]; const s = codec.decodeState(d.subarray(5, 69)); onPacket(actor, [s.x, s.y, s.z]); }
     };
     ws.onopen = () => { setInterval(() => { if (ws.readyState === 1 && mySlot >= 0) ws.send(codec.encodeState({ actor: mySlot, x: self.x, y: self.y, z: self.z, yaw: 0 })); }, 120); };
     ws.onerror = () => {};
