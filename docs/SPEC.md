@@ -369,12 +369,19 @@ hooking `FUN_004658d0` + `FUN_00456070`) recorded the real bindings:
   (`Shape\item\warpzone\{warpzone,teleport_ani,cic_ani}`). This is why the static group+4 bytes
   read as junk: the real name is this short runtime-built `Texture\NN`, not stored whole.
 
-So the binding scheme is now known. The remaining refinement for textured rendering is to locate
-that small material index per group in the static `.shp` struct (and read the shape name during
-capture, to tie each render-object back to a named mesh) → then map `Texture\NN` to the
-`Image*.dat` entries the viewers already decode. `port/frida/capture_textures.js` reproduces the
-capture (its header has the one-time registry setup; remove with
-`reg delete "HKCU\SOFTWARE\AxisArena" /f`).
+So the binding scheme is now known. **But `Texture\NN` is a per-model alias, not a global
+archive entry** (verified: `TEXTURE\00`/`01`/`07` match **0** entries across `Image0..5.dat`,
+while the shape-relative names the capture also showed — `SHAPE\ITEM\WARPZONE\CIC_ANI`,
+`TEXTURE\ITEM_DAMAGEMAP_ANI0` — *are* real Image0.dat entries). So when a specific model loads,
+the game loads that model's own skin and registers it in the texture manager under the generic
+alias `Texture\NN`; `FUN_004658d0` then binds the group to that alias. The group→alias link is
+captured; the remaining link for textured rendering is **alias→source**: what each `Texture\NN`
+is loaded from for a given model (capturable by hooking the texture-register/create path that
+feeds the six pages `FUN_00456070` searches, to record `(alias, source entry)` during model
+load), plus the per-group material index in the static `.shp` and the shape name during capture.
+Then the viewers map each group to the right `Image*.dat` texture they already decode.
+`port/frida/capture_textures.js` reproduces the capture (its header has the one-time registry
+setup; remove with `reg delete "HKCU\SOFTWARE\AxisArena" /f`).
 
 Until that mapping is wired in, the mesh/map viewers render untextured flat-shaded geometry and
 the texture gallery (§2.2) shows the textures standalone.
