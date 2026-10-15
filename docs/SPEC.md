@@ -492,6 +492,21 @@ path. This is a measured boundary (the code path provably never runs offline), n
 assumption — and even once traced, the sampler's x87 `float10` math (like §5) could only be
 reproduced web-consistently, not bit-exactly, in WASM.
 
+**And the init block is not a satisfiable local dependency (measured 2026-10-16).** To check
+whether the client is merely waiting on something a local stub could provide (a mutex/named pipe/
+file from the missing `AxisPlay.exe`, or a loopback server), a second Frida pass hooked the
+networking, IPC and wait APIs for ~4.5 s. Result: **zero** `ws2_32` calls (`connect`, `WSAConnect`,
+`recv`, `send`, `gethostbyname`, `getaddrinfo`, `select`, `WSAStartup` all 0), **zero** `OpenMutexW`/
+`CreateMutexW`/`WaitNamedPipeW`/`CallNamedPipeW`/`CreateFileW`, and **zero** `MessageBox`; only
+`WaitForSingleObject` (~7300), `WaitForMultipleObjects` (~840) and a handful of `PeekMessageW`. So
+the client is not blocked on a fillable local handshake — it sits at an interactive server-select
+screen and only issues a connection once a server is chosen in its UI, which then needs a live
+server. Reaching the in-match scene (where the per-tick animation/sim runs) therefore requires a
+protocol-correct lobby+game server, i.e. reversing and reimplementing the full login/match path —
+a standalone multi-week project, not an in-session step. The reasonable offline approaches (static
+layout from the file, runtime trace, and satisfying a local init dependency) are now all tried and
+measured insufficient; this is the genuine boundary.
+
 The mesh's per-vertex `attr` (4 bytes, §2.8) is the likely bone-index/weight for skinning;
 with verified keyframe playback + that skin binding the meshes can be deformed and animated.
 
