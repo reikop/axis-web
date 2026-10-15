@@ -156,6 +156,9 @@
         const [shape, bfd] = await Promise.all([fetchU8('/game/Data/Shape.dat'), fetchU8('/game/Map/' + mapName + '.bfd')]);
         const sp = toWasm(M, shape), bp = toWasm(M, bfd);
         const placed = M.ccall('engine_load_map', 'number', ['number', 'number', 'number', 'number'], [sp, shape.length, bp, bfd.length]);
+        if (placed >= 0 && qs.has('proj')) {                 // draw the demo targets as a real AXIS model (ALIEN\GIRL)
+          try { M.ccall('engine_load_entity_mesh', 'number', ['number', 'number', 'number'], [sp, shape.length, 5]); } catch (_) {}
+        }
         M.ccall('engine_free', null, ['number'], [sp]); M.ccall('engine_free', null, ['number'], [bp]);
         statusEl.textContent = placed >= 0
           ? `rendering map ${mapName} — ${placed} objects placed, meshes decoded by axis_shp.c in WASM, WebGL. (?map=NAME, or ?i=N for one mesh)`

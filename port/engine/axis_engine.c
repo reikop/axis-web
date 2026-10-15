@@ -32,6 +32,11 @@ static uint8_t RGBABUF[1024 * 1024 * 4];   /* decoded texture scratch */
 
 /* remote-player avatars (multiplayer) drawn as unit cubes at world positions */
 static GLuint vboCube, vboCubeN, iboCube;
+/* an optional real AXIS mesh used to draw the demo targets as actual game models
+ * instead of placeholder cubes (loaded by engine_load_entity_mesh). */
+static GLuint vboEnt, vboEntN, iboEnt;
+static int entTri = 0;
+static float entCenter[3] = {0,0,0}, entRadius = 1.0f;
 #define MAXAV 16
 static float avatars[MAXAV * 3];
 static int avCount = 0;
@@ -297,6 +302,30 @@ EMSCRIPTEN_KEEPALIVE void engine_fire(void) { gActPress[0] = 1; }
 
 /* HUD state: how many pickups the reconstructed axis_pickup layer has collected. */
 EMSCRIPTEN_KEEPALIVE int engine_pickups(void) { return gPickupCount; }
+
+/* Decode one Shape.dat record into a dedicated entity-mesh buffer, so the demo
+ * can draw its targets as a real AXIS model instead of a cube. Stores the mesh
+ * centre/radius so it can be scaled to a consistent on-screen size. */
+EMSCRIPTEN_KEEPALIVE int engine_load_entity_mesh(const uint8_t *dat, uint32_t len, uint32_t index) {
+    uint32_t count; memcpy(&count, dat, 4);
+    if (index >= count) return -1;
+    uint32_t off; memcpy(&off, dat + 4 + index * 0x44 + 0x40, 4);
+    uint32_t end = len;
+    if (index + 1 < count) memcpy(&end, dat + 4 + (index + 1) * 0x44 + 0x40, 4);
+    if (axis_shp_parse(dat, off, end, TPOS, TNRM, TUV, TTRI, TGRP, TCNT) != 0) return -2;
+    uint32_t vc = TCNT[0], tc = TCNT[1];
+    if (vc == 0 || tc == 0) return -3;
+    float lo[3] = {1e30f,1e30f,1e30f}, hi[3] = {-1e30f,-1e30f,-1e30f};
+    for (uint32_t i = 0; i < vc; i++) for (int k = 0; k < 3; k++) { float v = TPOS[i*3+k]; if (v<lo[k]) lo[k]=v; if (v>hi[k]) hi[k]=v; }
+    entRadius = 0.0001f;
+    for (int k = 0; k < 3; k++) { entCenter[k] = 0.5f*(lo[k]+hi[k]); float h = 0.5f*(hi[k]-lo[k]); if (h > entRadius) entRadius = h; }
+    if (!vboEnt) { glGenBuffers(1,&vboEnt); glGenBuffers(1,&vboEntN); glGenBuffers(1,&iboEnt); }
+    glBindBuffer(GL_ARRAY_BUFFER, vboEnt);  glBufferData(GL_ARRAY_BUFFER, vc*3*sizeof(float), TPOS, GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, vboEntN); glBufferData(GL_ARRAY_BUFFER, vc*3*sizeof(float), TNRM, GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, iboEnt); glBufferData(GL_ELEMENT_ARRAY_BUFFER, tc*3*sizeof(uint32_t), TTRI, GL_STATIC_DRAW);
+    entTri = (int)tc;
+    return (int)tc;
+}
 
 /* Demo: run the reconstructed projectile combat sim in the engine — place a ring
  * of targets around the loaded map's centre and fire homing projectiles at them
@@ -645,7 +674,23 @@ static void frame(void) {
             GLint uM = glGetUniformLocation(prog, "uMVP"), uMo = glGetUniformLocation(prog, "uModel");
             glUniform1i(glGetUniformLocation(prog, "uHasTex"), 0);
             float st = gRadius * 0.05f, sp = gRadius * 0.025f;
-            for (int i = 0; i < gTgtN; i++) {                /* targets: red cubes */
+            if (entTri > 0) {                                /* targets: a real AXIS model */
+                glBindBuffer(GL_ARRAY_BUFFER, vboEnt);  glEnableVertexAttribArray(aPos); glVertexAttribPointer(aPos, 3, GL_FLOAT, GL_FALSE, 0, 0);
+                glBindBuffer(GL_ARRAY_BUFFER, vboEntN); glEnableVertexAttribArray(aNrm); glVertexAttribPointer(aNrm, 3, GL_FLOAT, GL_FALSE, 0, 0);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, iboEnt);
+                glUniform3f(glGetUniformLocation(prog, "uColor"), 0.95f, 0.8f, 0.3f);
+                float s = (gRadius * 0.16f) / entRadius;      /* fit the model to a target-sized box */
+                for (int i = 0; i < gTgtN; i++) {
+                    float m[16] = { s,0,0,0, 0,s,0,0, 0,0,s,0,
+                        gTgt[i*3+0] - s*entCenter[0], gTgt[i*3+1] - s*entCenter[1], gTgt[i*3+2] - s*entCenter[2], 1 };
+                    float mv[16]; mat_mul(mv, mvp, m);
+                    glUniformMatrix4fv(uM, 1, GL_FALSE, mv); glUniformMatrix4fv(uMo, 1, GL_FALSE, m);
+                    glDrawElements(GL_TRIANGLES, entTri * 3, GL_UNSIGNED_INT, 0);
+                }
+                glBindBuffer(GL_ARRAY_BUFFER, vboCube);  glVertexAttribPointer(aPos, 3, GL_FLOAT, GL_FALSE, 0, 0);
+                glBindBuffer(GL_ARRAY_BUFFER, vboCubeN); glVertexAttribPointer(aNrm, 3, GL_FLOAT, GL_FALSE, 0, 0);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, iboCube);
+            } else for (int i = 0; i < gTgtN; i++) {         /* targets: red cubes (fallback) */
                 glUniform3f(glGetUniformLocation(prog, "uColor"), 0.9f, 0.2f, 0.2f);
                 float m[16] = { st,0,0,0, 0,st,0,0, 0,0,st,0, gTgt[i*3], gTgt[i*3+1], gTgt[i*3+2], 1 };
                 float mv[16]; mat_mul(mv, mvp, m);
