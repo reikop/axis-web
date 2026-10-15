@@ -73,9 +73,9 @@ const meshCache=new Map();
 const LIVE={on:false, shapeAB:null, byLower:{}};   // in-browser decode straight from game files
 let EXE=null; const IMG=[]; const texCache=new Map();   // AXIS.EXE + Image*.dat TOCs for textures
 
-// decode an object's skin (SHAPE\<name>) from the Image pages via ptx.js; cached
-function decodeTexFor(shapeName){
-  const key="SHAPE\\"+shapeName; const up=key.toUpperCase();
+// decode a texture by exact name from the Image pages via ptx.js; cached
+function texByName(name){
+  const up=name.toUpperCase();
   if(texCache.has(up)) return texCache.get(up);
   let out=null;
   if(EXE) for(const im of IMG){
@@ -86,6 +86,21 @@ function decodeTexFor(shapeName){
       out=c; }catch(_){ out=null; } break; }
   }
   texCache.set(up,out); return out;
+}
+// resolve a group's skin: index "NN" -> TEXTURE\NN (try padded), else the shape's SHAPE\<name>
+function groupTex(shapeName, tex4){
+  if(!EXE) return null;
+  if(tex4){ const cs=[tex4]; if(/^\d+$/.test(tex4)) cs.push(tex4.padStart(2,"0"));
+    for(const c of cs){ const t=texByName("TEXTURE\\"+c); if(t) return t; } return null; }
+  return texByName("SHAPE\\"+shapeName);
+}
+// per-triangle texture array for a mesh (computed once per cached shape)
+function buildTriTex(m, shapeName){
+  if(!EXE || !m.groups || !m.uv || !m.uv.length) return null;
+  const tt=new Array(m.tris.length).fill(null); let any=false;
+  for(const g of m.groups){ const tx=groupTex(shapeName,g.tex4);
+    if(tx){ any=true; for(let i=g.triStart;i<g.triEnd;i++) tt[i]=tx; } }
+  return any?tt:null;
 }
 // affine texture-mapped triangle (texture px -> screen)
 function texTri(img, sx0,sy0,sx1,sy1,sx2,sy2, u0,v0,u1,v1,u2,v2){
@@ -128,14 +143,16 @@ function draw(){
       const RP=new Array(m.pos.length);
       for(let i=0;i<m.pos.length;i++){const p=m.pos[i]; RP[i]=rot(p[0]+o[0],p[1]+o[1],p[2]+o[2]);}
       const SP=RP.map(proj);
-      for(const t of m.tris){
+      const TT=(texOn && m.triTex)?m.triTex:null;
+      for(let ti=0;ti<m.tris.length;ti++){
+        const t=m.tris[ti];
         const a=SP[t[0]],b=SP[t[1]],c=SP[t[2]]; if(!a||!b||!c) continue;
         const ra=RP[t[0]],rb=RP[t[1]],rc=RP[t[2]];
         let nx=(rb[1]-ra[1])*(rc[2]-ra[2])-(rb[2]-ra[2])*(rc[1]-ra[1]);
         let ny=(rb[2]-ra[2])*(rc[0]-ra[0])-(rb[0]-ra[0])*(rc[2]-ra[2]);
         let nz=(rb[0]-ra[0])*(rc[1]-ra[1])-(rb[1]-ra[1])*(rc[0]-ra[0]);
         const ln=Math.hypot(nx,ny,nz)||1; let d=Math.abs((nx*L[0]+ny*L[1]+nz*L[2])/ln);
-        const tx=(inst.tex&&texOn)?inst.tex:null;
+        const tx=TT?TT[ti]:null;
         faces.push([(a[2]+b[2]+c[2])/3,a,b,c,d,inst.col, tx,
           tx?m.uv[t[0]]:null, tx?m.uv[t[1]]:null, tx?m.uv[t[2]]:null]);
       }
@@ -195,13 +212,14 @@ function fit(pts){
 function centroid(pos){let c=[0,0,0];for(const p of pos){c[0]+=p[0];c[1]+=p[1];c[2]+=p[2];}
   const n=pos.length||1;return [c[0]/n,c[1]/n,c[2]/n];}
 
-async function getMesh(id){ if(meshCache.has(id))return meshCache.get(id);
+async function getMesh(id, origName){ if(meshCache.has(id))return meshCache.get(id);
   if(LIVE.on){                       // decode straight from Shape.dat via shp.js
     const e=LIVE.byLower[id.toLowerCase()];
     if(!e){meshCache.set(id,null);return null;}
     try{ const r=window.AXISShape.parseShape(LIVE.shapeAB,e.off,e.end);
       if(!r.pos.length||!r.tris.length){meshCache.set(id,null);return null;}
-      const m={pos:r.pos,nrm:r.nrm,uv:r.uv,tris:r.tris,centroid:centroid(r.pos)};
+      const m={pos:r.pos,nrm:r.nrm,uv:r.uv,tris:r.tris,groups:r.groups,centroid:centroid(r.pos)};
+      m.triTex=buildTriTex(m, origName||e.name);   // per-group real skins
       meshCache.set(id,m); return m; }
     catch(err){ meshCache.set(id,null); return null; }
   }
@@ -222,14 +240,14 @@ async function loadMap(name){
   objs.forEach(o=>o.col=fc[family(o.name)]);
   // build mesh instances (re-centre each shape at its object position)
   instances=[]; let tris=0, matched=0;
-  const uniq=[...new Set(objs.map(o=>o.name.replace(/[\\/]/g,"_")))];
-  const meshes={}; await Promise.all(uniq.map(async id=>{meshes[id]=await getMesh(id);}));
+  const idName={}; for(const o of objs) idName[o.name.replace(/[\\/]/g,"_")]=o.name;
+  const uniq=Object.keys(idName);
+  const meshes={}; await Promise.all(uniq.map(async id=>{meshes[id]=await getMesh(id, idName[id]);}));
   const pts=[];
   for(const o of objs){
     const id=o.name.replace(/[\\/]/g,"_"); const m=meshes[id];
     if(m){ matched++; const off=[o.pos[0]-m.centroid[0],o.pos[1]-m.centroid[1],o.pos[2]-m.centroid[2]];
-      const tex=(LIVE.on && m.uv && m.uv.length)?decodeTexFor(o.name):null;
-      instances.push({mesh:m,off,col:o.col,tex}); tris+=m.tris.length;
+      instances.push({mesh:m,off,col:o.col}); tris+=m.tris.length;
       for(const p of m.pos) pts.push([p[0]+off[0],p[1]+off[1],p[2]+off[2]]); }
     else pts.push(o.pos);
   }
