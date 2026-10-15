@@ -101,7 +101,42 @@
     ws.onerror = () => {};
   }
 
-  AxisEngine({ canvas, onRuntimeInitialized() {} }).then(async (M) => {
+  // No map/mesh selected -> show a start menu (pick a map, see controls, Play),
+  // so the engine is a self-contained playable front-end, not only URL params.
+  async function showStartMenu() {
+    statusEl.textContent = '';
+    let maps = [];
+    try { maps = await (await fetch('/maps/index.json')).json(); } catch (_) {}
+    const wrap = document.getElementById('wrap');
+    const menu = document.createElement('div');
+    menu.style.cssText = 'max-width:720px;width:100%;background:#111417;border:1px solid #262b31;border-radius:8px;padding:18px;box-sizing:border-box';
+    const opts = maps.length
+      ? `<label style="display:block;margin:10px 0 4px;color:#9aa3ad">Map</label>
+         <select id="mapsel" style="background:#1b2026;color:#cdd3da;border:1px solid #2a3139;border-radius:6px;padding:6px 10px;min-width:220px">${maps.map(m => `<option value="${m}">${m}</option>`).join('')}</select>`
+      : `<p style="color:#e0a0a0">No maps found — run <code>python run.py /path/to/Axis_Win</code> so your maps are served, then reload.</p>`;
+    menu.innerHTML = `
+      <h2 style="margin:0 0 6px;font-size:16px">Play AXIS (web port)</h2>
+      <p style="color:#8a929c;margin:0 0 10px">Walk a real AXIS arena rendered from your own game files, with the reconstructed per-tick simulation running live in WebAssembly.</p>
+      ${opts}
+      <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+        <button id="play" ${maps.length ? '' : 'disabled'} style="background:#24405f;color:#dbeafe;border:1px solid #2f5a86;border-radius:6px;padding:8px 16px;cursor:pointer;font-weight:600">&#9654; Play (walk + simulation)</button>
+        <button id="walk" ${maps.length ? '' : 'disabled'} style="background:#1b2026;color:#cdd3da;border:1px solid #2a3139;border-radius:6px;padding:8px 16px;cursor:pointer">Walk only</button>
+      </div>
+      <div style="margin-top:14px;color:#6a727c;font-size:12px;line-height:1.7">
+        <b style="color:#9aa3ad">Controls</b><br>
+        W A S D &mdash; move (stops at walls) &middot; Q / E / Space &mdash; down / up &middot; Shift &mdash; sprint<br>
+        Mouse (click to lock) or arrows / I J K L &mdash; look &middot; <b style="color:#9aa3ad">F</b> &mdash; fire &middot; Esc &mdash; release mouse
+      </div>`;
+    wrap.insertBefore(menu, wrap.firstChild);
+    canvas.style.display = 'none'; document.getElementById('row').style.display = 'none';
+    const go = (extra) => { location.href = location.pathname + '?map=' + encodeURIComponent(document.getElementById('mapsel').value) + extra; };
+    const pb = document.getElementById('play'), wb = document.getElementById('walk');
+    if (pb) pb.onclick = () => go('&proj');
+    if (wb) wb.onclick = () => go('');
+  }
+
+  if (!mapName && !qs.has('i')) { showStartMenu(); }
+  else AxisEngine({ canvas, onRuntimeInitialized() {} }).then(async (M) => {
     try {
       if (mapName) {
         statusEl.textContent = `fetching Shape.dat + Map/${mapName}.bfd …`;
