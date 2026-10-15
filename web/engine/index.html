@@ -26,29 +26,40 @@
 <script>
   const statusEl = document.getElementById('status');
   const canvas = document.getElementById('canvas');
-  // which Shape.dat record to show (?i=123)
-  const idx = (() => { const m = /[?&]i=(\d+)/.exec(location.search); return m ? (+m[1]) : 0; })();
+  const qs = new URLSearchParams(location.search);
+  const mapName = qs.get('map');                         // ?map=CUBE  -> render a whole map
+  const idx = qs.has('i') ? (+qs.get('i')) : 0;          // ?i=123     -> render one mesh
 
-  AxisEngine({
-    canvas,
-    onRuntimeInitialized() {},
-  }).then(async (M) => {
-    statusEl.textContent = 'fetching Data/Shape.dat …';
-    let buf;
+  async function fetchU8(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' for ' + url);
+    return new Uint8Array(await r.arrayBuffer());
+  }
+  function toWasm(M, u8) { const p = M.ccall('engine_alloc', 'number', ['number'], [u8.length]); M.HEAPU8.set(u8, p); return p; }
+
+  AxisEngine({ canvas, onRuntimeInitialized() {} }).then(async (M) => {
     try {
-      const r = await fetch('/game/Data/Shape.dat');
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      buf = new Uint8Array(await r.arrayBuffer());
+      if (mapName) {
+        statusEl.textContent = `fetching Shape.dat + Map/${mapName}.bfd …`;
+        const [shape, bfd] = await Promise.all([fetchU8('/game/Data/Shape.dat'), fetchU8('/game/Map/' + mapName + '.bfd')]);
+        const sp = toWasm(M, shape), bp = toWasm(M, bfd);
+        const placed = M.ccall('engine_load_map', 'number', ['number', 'number', 'number', 'number'], [sp, shape.length, bp, bfd.length]);
+        M.ccall('engine_free', null, ['number'], [sp]); M.ccall('engine_free', null, ['number'], [bp]);
+        statusEl.textContent = placed >= 0
+          ? `rendering map ${mapName} — ${placed} objects placed, meshes decoded by axis_shp.c in WASM, WebGL. (?map=NAME, or ?i=N for one mesh)`
+          : `engine_load_map failed (code ${placed}) for ${mapName}`;
+      } else {
+        statusEl.textContent = 'fetching Data/Shape.dat …';
+        const shape = await fetchU8('/game/Data/Shape.dat');
+        const sp = toWasm(M, shape);
+        const groups = M.ccall('engine_load_mesh', 'number', ['number', 'number', 'number'], [sp, shape.length, idx]);
+        M.ccall('engine_free', null, ['number'], [sp]);
+        statusEl.textContent = groups >= 0
+          ? `rendering Shape.dat record #${idx} — ${groups} group(s). WASM backend, WebGL. (?i=N for meshes, ?map=NAME for maps)`
+          : `engine_load_mesh failed (code ${groups}) for record #${idx}`;
+      }
     } catch (e) {
-      statusEl.textContent = 'could not fetch /game/Data/Shape.dat (run via run.py). ' + e.message;
-      return;
+      statusEl.textContent = 'load failed (run via run.py so /game/ is served): ' + e.message;
     }
-    const ptr = M.ccall('engine_alloc', 'number', ['number'], [buf.length]);
-    M.HEAPU8.set(buf, ptr);
-    const groups = M.ccall('engine_load_mesh', 'number', ['number', 'number', 'number'], [ptr, buf.length, idx]);
-    M.ccall('engine_free', null, ['number'], [ptr]);
-    statusEl.textContent = groups >= 0
-      ? `rendering Shape.dat record #${idx} — ${groups} group(s). WASM backend, WebGL. (?i=N for other meshes)`
-      : `engine_load_mesh failed (code ${groups}) for record #${idx}`;
   }).catch(e => { statusEl.textContent = 'WASM init failed: ' + e.message; });
 </script>
