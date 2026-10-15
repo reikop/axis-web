@@ -6,7 +6,7 @@
  *
  * This is the first reconstructed-to-C piece of the approach-B port: it compiles
  * to WebAssembly with Emscripten (see ../build.sh) so the browser client can
- * decrypt the user's Map/*.bfd, *.ape, Item/Component/Sound.dat in a hot WASM
+ * decrypt the user's Map .bfd, .ape, Item/Component/Sound.dat in a hot WASM
  * path instead of JS.  The functions operate in place on a caller-provided
  * buffer in linear memory.
  *

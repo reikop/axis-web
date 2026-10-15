@@ -1,43 +1,61 @@
 #!/usr/bin/env bash
 # Build the reconstructed AXIS native code to WebAssembly with Emscripten.
 #
-# This is the approach-B toolchain path (run it in WSL or any box with emsdk):
-#   1. git clone https://github.com/emscripten-core/emsdk && cd emsdk
-#      ./emsdk install latest && ./emsdk activate latest && source ./emsdk_env.sh
-#   2. cd axis-web/port && ./build.sh
+# This is the approach-B toolchain path. VERIFIED WORKING on Ubuntu/WSL2 with
+# the distro emscripten (apt): emcc 3.1.69, node v22. Setup that was used:
+#   sudo apt-get install -y --no-install-recommends \
+#        emscripten build-essential cmake nodejs
+#   emcc --version          # 3.1.69
+# (or the upstream emsdk: git clone emscripten-core/emsdk && ./emsdk install latest
+#  && ./emsdk activate latest && source ./emsdk_env.sh)
+# Then:  cd axis-web/port && ./build.sh [<game_dir>]
 #
-# It compiles the reconstructed C in src/ to a standalone WASM module exporting
-# the AXIS primitives, for the browser client to load. As more of the game is
-# reconstructed (archive index, PTX codec, .shp mesh, map decode, then the
-# simulation) each lands as another src/*.c and is added to SRC below.
+# It compiles the reconstructed C in src/ to ONE standalone WASM reactor module
+# (no JS runtime, no imports) exporting the AXIS primitives + memory, so the
+# browser client -- and wasm/verify_emcc.js -- can instantiate it directly, the
+# same shape as the hand-assembled module in wasm/build_wasm.js. As more of the
+# game is reconstructed (archive index, PTX codec, .shp mesh, map decode, then
+# the simulation) each lands as another src/*.c added to SRC below; the larger
+# pieces can only be built this way (not hand-assembled).
 #
-# NOTE: the environment that produced this repo had no emcc, so the cipher
-# module is *also* hand-assembled + verified by `node wasm/build_wasm.js`
-# (identical semantics, no toolchain needed). This script is the full path that
-# supersedes it once emsdk is present.
+# The cipher/state/rng module is *also* hand-assembled + verified with no
+# toolchain by `node wasm/build_wasm.js` (identical semantics); this script is
+# the full compiler path, and wasm/verify_emcc.js checks its output against the
+# same real game data (cipher 10/10, state 6844/6844, rng 4096/4096).
 set -euo pipefail
 cd "$(dirname "$0")"
+GAME="${1:-../../Axis_Win}"
 
 SRC=(src/axis_crypt.c src/axis_netdecode.c src/axis_rng.c)
 OUT=wasm/axis.wasm
 
-EXPORTS='["_axis_decrypt","_axis_encrypt","_axis_decode_state","_axis_encode_state","_axis_rng_fill","_malloc","_free"]'
+EXPORTS='["_axis_decrypt","_axis_encrypt","_axis_decode_state","_axis_encode_state","_axis_rng_fill"]'
 
 if ! command -v emcc >/dev/null 2>&1; then
-  echo "emcc not found. Install emsdk first (see the header of this script)."
+  echo "emcc not found. Install it first (see the header of this script)."
   echo "Meanwhile, 'node wasm/build_wasm.js <game_dir>' builds + verifies the"
-  echo "cipher module with no toolchain."
+  echo "cipher/state/rng module with no toolchain."
   exit 1
 fi
 
+# Standalone reactor: --no-entry + STANDALONE_WASM, functions kept via
+# EMSCRIPTEN_KEEPALIVE in the sources. 48 MiB initial (grows to 256 MiB) so any
+# single game file fits above the 16 MiB scratch floor the verifier uses.
 emcc "${SRC[@]}" \
-  -O3 -flto \
-  -s STANDALONE_WASM=0 \
-  -s MODULARIZE=1 -s EXPORT_NAME=AXISModule \
-  -s EXPORTED_FUNCTIONS="$EXPORTS" \
-  -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","HEAPU8"]' \
+  -O3 --no-entry \
+  -s STANDALONE_WASM=1 \
+  -s INITIAL_MEMORY=50331648 \
   -s ALLOW_MEMORY_GROWTH=1 \
+  -s MAXIMUM_MEMORY=268435456 \
+  -s EXPORTED_FUNCTIONS="$EXPORTS" \
+  -s ERROR_ON_UNDEFINED_SYMBOLS=1 \
   -o "$OUT"
 
-echo "built $OUT"
-ls -l "$OUT"
+echo "built $OUT ($(wc -c < "$OUT") bytes)"
+
+if command -v node >/dev/null 2>&1; then
+  echo "--- verifying against real game data ($GAME) ---"
+  node wasm/verify_emcc.js "$OUT" "$GAME"
+else
+  echo "node not found -- skipping verification"
+fi

@@ -18,20 +18,26 @@ files** (not just the cipher):
   4096/4096 AND the shipped MATHFUNC.TBL pool 4096/4096**, so a WASM client reproduces the exact
   shared pool and can stay in lockstep with the original game's spawns/AI/damage decisions.
 
-Both are verified in two ways:
+Both are verified **two independent ways**, and both now pass on the real game data:
 
-- `build.sh` compiles `src/*.c` to WASM with Emscripten (run in WSL; see below).
-- Because this repo was produced with no C toolchain, `node wasm/build_wasm.js <game_dir>`
-  **hand-assembles the identical module** (202 bytes) and verifies it: decrypt == reference
-  and encrypt∘decrypt == identity, then decrypts every `Map/*.bfd`, `AutoPlay/*.ape` and
-  `Sound.dat` byte-identically (10/10 pass). It also emits `web/crypt.js` (the module embedded
-  for the browser), and `web/wasm.html` shows it decrypting your files in-browser with the
-  **WASM** backend (verified: all PASS, 0 errors).
+- **Emscripten compiler path (`build.sh`)** — now confirmed working. Built with the Ubuntu/WSL2
+  distro emscripten (`emcc 3.1.69`, `node v22`) to a 1102-byte standalone reactor WASM, then
+  `wasm/verify_emcc.js` instantiates it headless and checks it against your real files:
+  cipher **10/10** byte-identical, state decode **6844/6844** and encode **6844/6844** f32-exact
+  (plus encode∘decode recovering every original packet), rng **4096/4096** vs the MSVC reference
+  **and** the shipped `MATHFUNC.TBL` pool. This is the path the larger reconstructions (mesh/map
+  decode, then the simulation) must use — they can't be hand-assembled.
+- **No-toolchain path (`node wasm/build_wasm.js <game_dir>`)** — for environments without emcc,
+  **hand-assembles the identical module** (~300 bytes) and runs the same checks (cipher 10/10,
+  state 6844/6844, rng 4096/4096). It also emits `web/crypt.js` (the module embedded for the
+  browser), and `web/wasm.html` shows it decrypting your files in-browser with the **WASM**
+  backend (verified: all PASS, 0 errors).
 
-So approach B is proven end-to-end in this environment: reconstructed AXIS logic → WASM →
-runs in Node and in the browser on real data. Each further `src/*.c` (archive index, PTX
+So approach B is proven end-to-end **both** by a real compiler and by the no-toolchain fallback:
+reconstructed AXIS logic → WASM → runs in Node and in the browser on real data, bit-for-bit
+matched between the two builds and the reference. Each further `src/*.c` (archive index, PTX
 codec, `.shp` mesh, map decode, then the simulation) is added to `build.sh`'s `SRC` list the
-same way.
+same way; `wasm/axis.wasm` is a build artifact and is gitignored (regenerate with `build.sh`).
 
 ---
 
@@ -41,14 +47,19 @@ This keeps the game's own logic and data formats behaviour-exact; only the OS bo
 rewritten. Rendering is OpenGL, so Emscripten's GL→WebGL layer does most of the graphics
 work. See `../docs/SPEC.md` for formats and the procedure map.
 
-## Toolchain (WSL)
+## Toolchain (WSL) — set up and confirmed working
 
 ```sh
-# in WSL (Ubuntu)
-git clone https://github.com/emscripten-core/emsdk
-cd emsdk && ./emsdk install latest && ./emsdk activate latest
-source ./emsdk_env.sh        # provides emcc / em++
-emcc -v                      # verify
+# in WSL (Ubuntu 2); the distro emscripten is enough and is what this repo used
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends emscripten build-essential cmake nodejs
+emcc --version               # 3.1.69 confirmed
+# then, from axis-web/port:
+./build.sh /path/to/Axis_Win # compiles src/*.c -> wasm/axis.wasm and verifies it
+
+# (alternatively the upstream emsdk for a newer emcc:)
+#   git clone https://github.com/emscripten-core/emsdk
+#   cd emsdk && ./emsdk install latest && ./emsdk activate latest && source ./emsdk_env.sh
 ```
 
 ## Shim surface (the only part that is newly written)
@@ -79,6 +90,10 @@ Game data is never bundled. The build expects the player to supply their own ins
 
 ## Status
 
-Stage 0 (analysis) in progress — formats and the shim surface are mapped in `../docs/SPEC.md`.
-No C++ has been reconstructed yet; this directory is the home for it. Nothing here is
-built or verified until the WSL toolchain is set up and step 1 is reconstructed.
+The WSL/Emscripten toolchain is set up and **the WASM build path is live and verified**
+(see the top of this file): the cipher, the type-0 state codec, and the shared RNG pool are
+reconstructed to C, compiled with `emcc` to a standalone WASM module, and checked byte/f32-exact
+against the real game data. The platform shim (GL/window/input/audio/sockets, table above) and
+the larger reconstructions (PTX codec, `.shp` mesh, `.bfd` map, then the per-tick simulation)
+are the remaining work; each is added as another `src/*.c` and verified the same way. Formats
+and the procedure map are in `../docs/SPEC.md`.
