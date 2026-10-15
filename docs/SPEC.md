@@ -324,6 +324,19 @@ meshes (795) need the inter-group padding pinned. Tools: `tools/parse_shp.py` (p
 shifted +0x18 from disk because the saved struct's pointer fields realign on load; the disk
 offsets above (vc@0x34) are what the bytes actually use.
 
+### 2.9 Mesh → texture binding (`FUN_004658d0`)
+
+Each `.shp` group header stores a (partial) **texture name at group+4** (within the 0x80
+header). After loading a shape, `FUN_004658d0` iterates the groups and, for each, builds the
+full texture name by prepending a context prefix (`DAT_004b22cc` + the caller's `param_1`,
+which varies by load context) to that stored name, loads it via `FUN_00456070`, and stores
+the GL texture id at group+0x44. So the binding is **group-local but its name is resolved at
+run time with a context-dependent prefix** — applying textures correctly needs that prefix
+resolution reversed per caller (the map/object/actor load paths pass different `param_1`).
+Many groups store an empty name (untextured / default). The decoded textures (§2.2) are
+keyed by names like `SHAPE\<category>\<surface>`; only ~24 shapes share a name 1:1, so the
+mapping is material-based, not per-shape.
+
 ## 4. Next analysis targets
 
 1. Multi-group `.shp` inter-group padding → export the remaining 795 meshes; then wire
