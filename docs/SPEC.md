@@ -88,9 +88,29 @@ emit(out, w, h, planes)                        # FUN_0046deb0  -> glTexImage2D b
 # returns GL format code: 2 (RGB) or 3 (RGBA)
 ```
 
-**For approach B this codec is reconstructed to C++ and compiled as-is** — no need to
-re-derive the DCT/entropy math in script. A standalone PNG extractor (optional, stage 1)
-would require reversing `FUN_0046e530` + `FUN_0046de30` fully.
+**PTX is a custom JPEG** (confirmed by decompiling the codec):
+
+- `FUN_0046de30(quality)` builds the **quantization table**:
+  `quant[i] = (baseQuant[i] * scale[i] * 100) / quality >> 12`, where `quality` = the header
+  `table` field (e.g. 300), `baseQuant` @`0x4c7d58`, `scale` @`0x4aba60` (0x200 bytes = 128
+  ints: luma + chroma tables).
+- `FUN_0046e510(stream)` inits the bit-reader (ptr @`0xa62bd8`, bit-pos `0xa22bd4`, DC
+  predictor `0xaa3b5c`).
+- `FUN_0046e530(block[64])` decodes one 8×8 block — **exactly JPEG entropy coding**:
+  `DC = predictor + huffDC(); predictor = DC` (differential DC), then AC coefficients as
+  `(run, value)` pairs (`huffAC`), zeros skipped by `run`, placed in **zig-zag order**
+  (table @`0x4c6994`, 64 ints), terminated by EOB `(0,0)`.
+- `FUN_0046e610` = DC huffman, `FUN_0046e720` = AC huffman (run/value).
+- `FUN_0046d800` = **dequantize + 8×8 inverse DCT** + place into the plane.
+- `FUN_0046dcb0`/`FUN_0046dd60` = combine planes **YCbCr → RGB/RGBA**.
+
+The zig-zag table @`0x4c6994` is the **standard JPEG zig-zag scan**, verified byte-for-byte:
+`0,1,8,16,9,2,3,10,17,24,32,25,18,11,4,5,12,19,26,33,40,48,41,34,27,20,13,6,7,14,21,28,
+35,42,49,56,57,50,43,36,29,22,15,23,30,37,44,51,58,59,52,45,38,31,39,46,53,60,61,54,47,
+55,62,63`. So PTX is standard JPEG machinery under a custom header — a standalone decoder
+is a baseline JPEG decoder fed the binary's quant/scale (`0x4c7d58`/`0x4aba60`) and huffman
+tables, producing YCbCr planes combined to RGB/RGBA. All pieces are identified; this is the
+next implementation task (and in approach B it compiles from the reconstructed C++ as-is).
 
 ### 2.3 Encrypted data files  (`Item.dat`, `Component.dat`, `Sound.dat`, `Map/*.bfd`, `*.ape`)
 
