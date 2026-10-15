@@ -45,8 +45,8 @@
     <div class="stat" id="stats"></div>
     <label class="rowc"><input type="checkbox" id="meshes" checked> render meshes</label>
     <label class="rowc"><input type="checkbox" id="wire"> wireframe</label>
-    <div class="hint">Drag to orbit · wheel to zoom. Each placed object is its real
-      Shape.dat mesh, re-centred at its map position. Height = Y.</div>
+    <div class="hint">Drag to orbit · wheel to zoom · <b>WASD</b> move, <b>R/F</b> up/down to
+      walk the map. Each placed object is its real Shape.dat mesh at its map position.</div>
     <div class="hint"><a href="index.html">← archive explorer</a> · <a href="shape.html">mesh viewer →</a></div>
   </aside>
   <div class="view"><canvas id="c"></canvas><div class="hud" id="hud"></div></div>
@@ -175,6 +175,19 @@ cv.addEventListener("pointerup",()=>drag=null);
 cv.addEventListener("wheel",e=>{e.preventDefault();dist=Math.max(0.6,Math.min(8,dist*(e.deltaY>0?1.1:0.9)));draw();},{passive:false});
 document.getElementById("meshes").addEventListener("change",e=>{useMesh=e.target.checked;draw();});
 document.getElementById("wire").addEventListener("change",e=>{wire=e.target.checked;draw();});
+
+// WASD walk: translate the look-at centre along the current view's ground axes
+addEventListener("keydown",e=>{
+  const k=e.key.toLowerCase(); const step=ext*0.04;
+  const cy=Math.cos(yaw),sy=Math.sin(yaw);
+  // forward (into screen, on X-Z plane) and right vectors from yaw
+  const fwd=[-sy,0,-cy], right=[cy,0,-sy];
+  let m=null;
+  if(k==="w")m=fwd; else if(k==="s")m=[-fwd[0],0,-fwd[2]];
+  else if(k==="d")m=right; else if(k==="a")m=[-right[0],0,-right[2]];
+  else if(k==="r")m=[0,1,0]; else if(k==="f")m=[0,-1,0];
+  if(m){ center=[center[0]+m[0]*step,center[1]+m[1]*step,center[2]+m[2]*step]; draw(); e.preventDefault(); }
+});
 
 Promise.all([
   fetch("shapes/index.json").then(r=>r.ok?r.json():[]).catch(()=>[]),
