@@ -115,6 +115,33 @@ A map is `<name>.bfd`, opened in sequence by several section parsers (submode at
 Autoplay/replay (`AutoPlay\%s`, mode 3) reads the same `0x1201` container. The tick also
 draws the loading screen with GL (`glClearColor`/`glClearDepth`/`glClear`/`glColor4f`).
 
+### 2.5 Terrain / ground  (`FUN_0048ae40`, the LOAD_ZONE parser)
+
+The ground is **heightmap terrain**: a global header (version `0x1201`, lighting/sky/fog
+settings, up to 5 named ground textures + a 6-tex and a 16-tex set, each loaded by name via
+`FUN_00456070`) followed by `N = *(this+0xdc0a74)` **terrain patches** (per-patch struct
+stride `0x20C` bytes, array at `this+0xdc0264`).
+
+Per patch (field = int index off the patch pointer `p`):
+
+| field | meaning |
+|-------|---------|
+| `p[0]=W`, `p[-1]=H` | grid is `(W+1)×(H+1)` vertices |
+| `p[-7..-5]` | origin offset (ox, oy, oz) |
+| `p[1]` | cell spacing | `p[2]` | height scale | `p[3]` | UV tile size |
+| `p[-8]` | normal-flip flag | `p[5]` | patch texture (loaded by name) |
+| `p[6]` | heightmap: 1 byte/cell (grayscale value where R==G==B in the source RGB block) |
+| `p[7]` | per-cell flag/mask (neighbour-equality test) |
+| `p[8]` | **vertices** f32[3]/cell: `x=col*sp+ox`, `y=height*hs+oy`, `z=row*sp+oz` |
+| `p[9]` | **normals** f32[3]/cell (cross products via `FUN_00466e40`, negated if `p[-8]==1`) |
+| `p[0xc]` | **UVs** f32[2]/cell: `vertex.x/tile`, `vertex.y/tile` |
+| `p[0xe]`,`p[0x11]` | index / strip buffers |
+
+All buffers are bump-allocated into one arena at `this+0xdc0264+...` (cap 4,000,000 B).
+This is a standard renderable heightmap. **Exact .bfd byte order of the header + per-patch
+header still needs the `fread` (FUN_0046c060) argument sizes from the assembly** — the
+decompile shows the sequence but not each field's width.
+
 ## 3. Reverse-engineering map (procedures)
 
 | Address | Role |
@@ -139,11 +166,15 @@ draws the loading screen with GL (`glClearColor`/`glClearDepth`/`glClear`/`glCol
 | `0x49e03d` | path builder |
 | `0x49e02a` | fopen wrapper |
 | `0x49de96` | fread wrapper |
+| `0x46c060` | fread wrapper (used by `.bfd` parsers) |
+| `0x466e40` | vector/cross-product helper (terrain normals) |
+| `0x456070` | texture load-by-name |
 | `0x46bb90` | fatal error/log formatter |
 
 ## 4. Next analysis targets
 
-1. `FUN_0048ae40` — `.bfd` ground/terrain layout (the first walkable-map milestone).
+1. `.bfd` exact byte layout — read the `FUN_0046c060` (fread) arg sizes in `FUN_0048ae40`'s
+   assembly to pin each header + per-patch field width, then write a terrain parser + viewer.
 2. Shape record body @ its data blob — vertices / UVs / skeleton binding (renderer).
 3. `WinMain` / entry + main loop; GL draw style (immediate `glBegin` vs. vertex arrays).
 4. `WS2_32` send/recv call sites — multiplayer protocol → server reimplementation.
