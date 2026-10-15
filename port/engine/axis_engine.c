@@ -29,6 +29,12 @@ int axis_ptx_decode(const uint8_t *ptx, uint32_t ptxLen, const uint8_t *exe, uin
 static GLuint prog, vboPos, vboNrm, vboUV, ibo, texId;
 static int indexCount = 0, hasUV = 0, hasTex = 0;
 static uint8_t RGBABUF[1024 * 1024 * 4];   /* decoded texture scratch */
+
+/* remote-player avatars (multiplayer) drawn as unit cubes at world positions */
+static GLuint vboCube, vboCubeN, iboCube;
+#define MAXAV 16
+static float avatars[MAXAV * 3];
+static int avCount = 0;
 static float gCenter[3] = {0, 0, 0}, gRadius = 1.0f;
 
 /* free-fly / first-person camera */
@@ -89,10 +95,10 @@ static const char *VS =
     "void main(){ vN = mat3(uModel)*aNrm; vUV = aUV; gl_Position = uMVP*vec4(aPos,1.0); }";
 static const char *FS =
     "precision mediump float; varying vec3 vN; varying vec2 vUV;"
-    "uniform sampler2D uTex; uniform int uHasTex;"
+    "uniform sampler2D uTex; uniform int uHasTex; uniform vec3 uColor;"
     "void main(){ vec3 n=normalize(vN); float d=max(dot(n,normalize(vec3(0.4,0.8,0.6))),0.0);"
     "float l=0.45+0.55*d;"
-    "vec3 c = (uHasTex==1) ? texture2D(uTex, vUV).rgb*l : vec3(0.30,0.55,0.85)*l;"
+    "vec3 c = (uHasTex==1) ? texture2D(uTex, vUV).rgb*l : uColor*l;"
     "gl_FragColor=vec4(c,1.0); }";
 
 static GLuint compile(GLenum t, const char *src) {
@@ -162,6 +168,14 @@ EMSCRIPTEN_KEEPALIVE int engine_set_texture(const uint8_t *exe, uint32_t exeLen,
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     hasTex = 1;
     return (int)(wh[0] << 16 | wh[1]);
+}
+
+/* multiplayer: set the remote players' world positions (xyz triples, up to 16).
+ * The page decodes them from the relay with the real type-0 wire codec. */
+EMSCRIPTEN_KEEPALIVE void engine_set_avatars(const float *xyz, int n) {
+    if (n > MAXAV) n = MAXAV; if (n < 0) n = 0;
+    for (int i = 0; i < n * 3; i++) avatars[i] = xyz[i];
+    avCount = n;
 }
 
 static inline float rf32e(const uint8_t *p) { float v; __builtin_memcpy(&v, p, 4); return v; }
@@ -300,9 +314,29 @@ static void frame(void) {
             else glDisableVertexAttribArray(aUV);
         }
         glUniform1i(glGetUniformLocation(prog, "uHasTex"), hasTex ? 1 : 0);
+        glUniform3f(glGetUniformLocation(prog, "uColor"), 0.30f, 0.55f, 0.85f);
         if (hasTex) { glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texId); glUniform1i(glGetUniformLocation(prog, "uTex"), 0); }
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
         glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
+
+        /* remote-player avatars: colored cubes at their world positions */
+        if (avCount > 0) {
+            float s = gRadius * 0.03f; if (s < 1.0f) s = 1.0f;
+            glUniform1i(glGetUniformLocation(prog, "uHasTex"), 0);
+            glUniform3f(glGetUniformLocation(prog, "uColor"), 0.95f, 0.55f, 0.15f);
+            if (aUV >= 0) glDisableVertexAttribArray(aUV);
+            glBindBuffer(GL_ARRAY_BUFFER, vboCube);  glEnableVertexAttribArray(aPos); glVertexAttribPointer(aPos, 3, GL_FLOAT, GL_FALSE, 0, 0);
+            glBindBuffer(GL_ARRAY_BUFFER, vboCubeN); glEnableVertexAttribArray(aNrm); glVertexAttribPointer(aNrm, 3, GL_FLOAT, GL_FALSE, 0, 0);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, iboCube);
+            GLint uMVPloc = glGetUniformLocation(prog, "uMVP"), uModelloc = glGetUniformLocation(prog, "uModel");
+            for (int a = 0; a < avCount; a++) {
+                float model[16] = { s,0,0,0, 0,s,0,0, 0,0,s,0, avatars[a*3], avatars[a*3+1], avatars[a*3+2], 1 };
+                float mvpa[16]; mat_mul(mvpa, mvp, model);
+                glUniformMatrix4fv(uMVPloc, 1, GL_FALSE, mvpa);
+                glUniformMatrix4fv(uModelloc, 1, GL_FALSE, model);
+                glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
+            }
+        }
     }
 }
 
@@ -348,6 +382,24 @@ int main(void) {
     glAttachShader(prog, compile(GL_FRAGMENT_SHADER, FS));
     glLinkProgram(prog);
     glGenBuffers(1, &vboPos); glGenBuffers(1, &vboNrm); glGenBuffers(1, &vboUV); glGenBuffers(1, &ibo);
+
+    /* unit-cube geometry for avatar markers (8 corners, normals = normalized pos) */
+    {
+        float cp[24], cn[24]; int w = 0;
+        for (int sx = -1; sx <= 1; sx += 2) for (int sy = -1; sy <= 1; sy += 2) for (int sz = -1; sz <= 1; sz += 2) {
+            cp[w] = (float)sx; cp[w+1] = (float)sy; cp[w+2] = (float)sz;
+            float il = 0.57735027f; cn[w] = sx*il; cn[w+1] = sy*il; cn[w+2] = sz*il; w += 3;
+        }
+        /* corner index by (x,y,z) bits: i = ((x+1)/2)*4 + ((y+1)/2)*2 + ((z+1)/2) */
+        static const uint16_t ci[36] = {
+            0,1,3, 0,3,2,  4,6,7, 4,7,5,   /* -x, +x */
+            0,4,5, 0,5,1,  2,3,7, 2,7,6,   /* -y, +y */
+            0,2,6, 0,6,4,  1,5,7, 1,7,3 }; /* -z, +z */
+        glGenBuffers(1, &vboCube); glGenBuffers(1, &vboCubeN); glGenBuffers(1, &iboCube);
+        glBindBuffer(GL_ARRAY_BUFFER, vboCube); glBufferData(GL_ARRAY_BUFFER, sizeof cp, cp, GL_STATIC_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, vboCubeN); glBufferData(GL_ARRAY_BUFFER, sizeof cn, cn, GL_STATIC_DRAW);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, iboCube); glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof ci, ci, GL_STATIC_DRAW);
+    }
     emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, 0, 1, onKey);
     emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, 0, 1, onKey);
     emscripten_set_mousemove_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, 0, 1, onMouseMove);

@@ -29,6 +29,7 @@
   <audio id="bgm" src="/game/Music/Netsphere.mp3" loop preload="none"></audio>
 </div>
 <script src="/shp.js"></script>
+<script src="/crypt.js"></script>
 <script src="axis_engine.js"></script>
 <script>
   const statusEl = document.getElementById('status');
@@ -56,6 +57,34 @@
   }
   function toWasm(M, u8) { const p = M.ccall('engine_alloc', 'number', ['number'], [u8.length]); M.HEAPU8.set(u8, p); return p; }
 
+  // Multiplayer: connect to the AXIS relay (server/relay.js) and render remote
+  // players as avatars, parsing their positions with the REAL type-0 wire codec
+  // (crypt.js encodeState/decodeState, the same bytes the game sends). This is the
+  // WASM engine itself speaking the mapped §4 protocol, not an ad-hoc format.
+  async function startMultiplayer(M, param) {
+    const url = (param && /^wss?:\/\//.test(param)) ? param : 'ws://127.0.0.1:8140';
+    let codec; try { codec = await window.AXISCrypt.load(); } catch (e) { return; }
+    const AVN = 16, avPtr = M.ccall('engine_alloc', 'number', ['number'], [AVN * 3 * 4]);
+    let mySlot = -1; const latest = {};
+    const self = { x: -1875, y: 6001, z: 5056 };          // demo self-position (CUBE center-ish)
+    function pushAvatars() {
+      const f = new Float32Array(M.HEAPU8.buffer, avPtr, AVN * 3);
+      let n = 0;
+      for (const a of Object.keys(latest)) { if (+a === mySlot || n >= AVN) continue; const p = latest[a]; f[n*3]=p[0]; f[n*3+1]=p[1]; f[n*3+2]=p[2]; n++; }
+      M.ccall('engine_set_avatars', null, ['number', 'number'], [avPtr, n]);
+      statusEl.textContent = `map ${mapName} · multiplayer: ${n} remote player(s) via ${url} (real type-0 codec, backend=${codec.backend})`;
+    }
+    let ws; try { ws = new WebSocket(url); } catch (e) { return; }
+    ws.binaryType = 'arraybuffer';
+    ws.onmessage = (ev) => {
+      const d = new Uint8Array(ev.data);
+      if (d.length === 2 && d[0] === 0xff) { mySlot = d[1]; return; }
+      if (d.length === 69) { const actor = d[4]; const s = codec.decodeState(d.subarray(5, 69)); latest[actor] = [s.x, s.y, s.z]; pushAvatars(); }
+    };
+    ws.onopen = () => { setInterval(() => { if (ws.readyState === 1 && mySlot >= 0) ws.send(codec.encodeState({ actor: mySlot, x: self.x, y: self.y, z: self.z, yaw: 0 })); }, 120); };
+    ws.onerror = () => {};
+  }
+
   AxisEngine({ canvas, onRuntimeInitialized() {} }).then(async (M) => {
     try {
       if (mapName) {
@@ -67,6 +96,7 @@
         statusEl.textContent = placed >= 0
           ? `rendering map ${mapName} — ${placed} objects placed, meshes decoded by axis_shp.c in WASM, WebGL. (?map=NAME, or ?i=N for one mesh)`
           : `engine_load_map failed (code ${placed}) for ${mapName}`;
+        if (placed >= 0 && qs.has('mp')) startMultiplayer(M, qs.get('mp'));
       } else {
         statusEl.textContent = 'fetching Data/Shape.dat …';
         const shape = await fetchU8('/game/Data/Shape.dat');
