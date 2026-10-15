@@ -12,6 +12,11 @@ files** (not just the cipher):
   verifies both f32-exact on all 6844 type-0 packets of a real replay — decode 6844/6844, encode
   6844/6844, and encode∘decode recovers every original packet.** So a WASM client can both parse
   and emit the game's real wire format, not an ad-hoc relay format.
+- `src/axis_rng.c` — `axis_rng_fill` builds the game's **shared deterministic RNG pool** (the
+  lockstep core, SPEC §5). AXIS loads a 4096-entry pool from `MATHFUNC.TBL`; it is exactly the
+  MSVC `rand()` LCG seeded with `srand(1)`. **Verified: the WASM fill matches the MSVC reference
+  4096/4096 AND the shipped MATHFUNC.TBL pool 4096/4096**, so a WASM client reproduces the exact
+  shared pool and can stay in lockstep with the original game's spawns/AI/damage decisions.
 
 Both are verified in two ways:
 

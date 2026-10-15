@@ -18,10 +18,10 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-SRC=(src/axis_crypt.c src/axis_netdecode.c)
+SRC=(src/axis_crypt.c src/axis_netdecode.c src/axis_rng.c)
 OUT=wasm/axis.wasm
 
-EXPORTS='["_axis_decrypt","_axis_encrypt","_axis_decode_state","_axis_encode_state","_malloc","_free"]'
+EXPORTS='["_axis_decrypt","_axis_encrypt","_axis_decode_state","_axis_encode_state","_axis_rng_fill","_malloc","_free"]'
 
 if ! command -v emcc >/dev/null 2>&1; then
   echo "emcc not found. Install emsdk first (see the header of this script)."

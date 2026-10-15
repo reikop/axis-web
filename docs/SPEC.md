@@ -535,13 +535,19 @@ by `run.py` at `/game/`; `web/audio.json` holds only filenames — no audio is c
 The sim is the remaining multi-year pillar; its structure is now mapped so it can be
 reconstructed function-by-function.
 
-**Shared-RNG determinism.** The game is deterministic lockstep for *decisions* (spawns, AI,
-damage rolls): it draws from a **precomputed 4096-entry random pool** `DAT_00a11bc8[0x1000]`
-through a single running index `DAT_00a20488`, as `pool[idx++ & 0xfff] % N`. Every peer holds
-the same pool and the same index, so every randomized decision matches across clients — which
-is why each packet also carries RNG samples (type 1, `[44..55]`) to keep the index in lockstep.
-The pool is runtime-filled (`.bss`, zero in the image); its generator/seed is the one piece
-still to locate (then the pool is reproducible → decisions become reproducible offline).
+**Shared-RNG determinism (fully recovered + verified).** The game is deterministic lockstep for
+*decisions* (spawns, AI, damage rolls): it draws from a **precomputed 4096-entry random pool**
+`DAT_00a11bc8[0x1000]` through a single running index `DAT_00a20488`, as `pool[idx++ & 0xfff] % N`.
+Every peer holds the same pool and index, so every randomized decision matches across clients —
+which is why each packet also carries RNG samples (type 1, `[44..55]`) to keep the index in lockstep.
+The pool is **loaded from `MATHFUNC.TBL`** (AXIS.EXE `FUN_0046b6f0`, plain `fread`, unencrypted):
+the file is `float32 sin[3600]` + `cos[3600]` + `tan[3600]` (over 0.1° steps) + `uint32 rng[4096]`,
+exactly 59584 bytes. **Decode verified** by matching the sin/cos tables to the real math functions
+(max err ~1.7e-07) — and the RNG pool is exactly the **MSVC `rand()` LCG seeded with `srand(1)`**
+(`seed = seed*214013 + 2531011; value = (seed>>16)&0x7fff`): regenerating it reproduces all 4096
+shipped entries (4096/4096, first values 41,18467,6334,26500…). So the determinism RNG is fully
+reconstructable offline. Tools: `tools/parse_mathfunc.py` (parse + verify); reconstructed as
+`port/src/axis_rng.c` → `axis_rng_fill`, which the WASM build verifies 4096/4096 vs MATHFUNC.TBL.
 
 **Round/level reset `FUN_0049d570`** (the `"incorrect level %d"` setup): on round start it draws
 six values from the RNG pool to choose spawn points and round parameters (per-map spawn tables

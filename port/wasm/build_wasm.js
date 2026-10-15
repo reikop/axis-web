@@ -25,7 +25,7 @@ const I32 = 0x7f, F32 = 0x7d, VOID = 0x40;
 const OP = { block:0x02, loop:0x03, end:0x0b, br:0x0c, br_if:0x0d, select:0x1b,
   get:0x20, set:0x21, i32load:0x28, f32load:0x2a, load8u:0x2d, load16s:0x2e,
   i32store:0x36, store8:0x3a, store16:0x3b, f32store:0x38,
-  i32:0x41, f32c:0x43, add:0x6a, and:0x71, or:0x72, xor:0x73, shl:0x74, shru:0x76, geu:0x4f,
+  i32:0x41, f32c:0x43, add:0x6a, mul:0x6c, and:0x71, or:0x72, xor:0x73, shl:0x74, shru:0x76, geu:0x4f,
   fadd:0x92, fsub:0x93, fmul:0x94, fdiv:0x95, flt:0x5d, fgt:0x5e, conv:0xb2, trunc:0xa8 };
 const f32c = x => [OP.f32c, ...new Uint8Array(Float32Array.of(x).buffer)];
 
@@ -127,15 +127,39 @@ function bodyEncodeState() {
   return [...vec([[1, F32]]), ...ins];
 }
 
+// axis_rng_fill(out=0) ; locals i=1, seed=2. Mirrors axis_rng.c (MSVC rand, srand(1)).
+function bodyRngFill() {
+  const O = 0, I = 1, SEED = 2;
+  const ins = [
+    OP.i32, 1, OP.set, SEED,                                   // seed = 1
+    OP.block, VOID,
+      OP.loop, VOID,
+        OP.get, I, OP.i32, ...uleb(4096), OP.geu, OP.br_if, 1,
+        // seed = seed*214013 + 2531011
+        OP.get, SEED, OP.i32, ...sleb(214013), OP.mul, OP.i32, ...sleb(2531011), OP.add, OP.set, SEED,
+        // out[i*4] = (seed>>16) & 0x7fff
+        OP.get, O, OP.get, I, OP.i32, 4, OP.mul, OP.add,
+        OP.get, SEED, OP.i32, 16, OP.shru, OP.i32, ...sleb(0x7fff), OP.and,
+        OP.i32store, 2, 0,
+        OP.get, I, OP.i32, 1, OP.add, OP.set, I,
+        OP.br, 0,
+      OP.end,
+    OP.end,
+    OP.end,
+  ];
+  return [...vec([[2, I32]]), ...ins];   // locals: 2 x i32
+}
+
 function buildModule() {
   const magic = [0x00, 0x61, 0x73, 0x6d], version = [0x01, 0x00, 0x00, 0x00];
-  // types: 0 = (i32,i32,i32)->() ; 1 = (i32,i32)->()
+  // types: 0 = (i32,i32,i32)->() ; 1 = (i32,i32)->() ; 2 = (i32)->()
   const typeSec = sec(1, vec([
     [0x60, ...vec([I32, I32, I32]), ...vec([])],
     [0x60, ...vec([I32, I32]), ...vec([])],
+    [0x60, ...vec([I32]), ...vec([])],
   ]));
-  // funcs: axis_decrypt(t0), axis_encrypt(t0), axis_decode_state(t1), axis_encode_state(t1)
-  const funcSec = sec(3, vec([0, 0, 1, 1]));
+  // funcs: decrypt(t0), encrypt(t0), decode_state(t1), encode_state(t1), rng_fill(t2)
+  const funcSec = sec(3, vec([0, 0, 1, 1, 2]));
   // memory: one, min 256 pages (16 MiB) — fits any AXIS file in one buffer
   const memSec = sec(5, vec([[0x00, ...uleb(256)]]));
   const expSec = sec(7, vec([
@@ -144,12 +168,14 @@ function buildModule() {
     [...str('axis_encrypt'), 0x00, 1],
     [...str('axis_decode_state'), 0x00, 2],
     [...str('axis_encode_state'), 0x00, 3],
+    [...str('axis_rng_fill'), 0x00, 4],
   ]));
   const codeSec = sec(10, vec([
     [...uleb(bodyDecrypt().length), ...bodyDecrypt()],
     [...uleb(bodyEncrypt().length), ...bodyEncrypt()],
     [...uleb(bodyDecodeState().length), ...bodyDecodeState()],
     [...uleb(bodyEncodeState().length), ...bodyEncodeState()],
+    [...uleb(bodyRngFill().length), ...bodyRngFill()],
   ]));
   return Uint8Array.from([...magic, ...version, ...typeSec, ...funcSec, ...memSec, ...expSec, ...codeSec]);
 }
@@ -328,5 +354,24 @@ async function main() {
     console.log(`encode∘decode : ${rt}/${total} recover the original quantised packet fields`);
     if (sf || ef) process.exit(1);
   }
+
+  // ---- axis_rng_fill: WASM-build the shared RNG pool, verify vs MATHFUNC.TBL
+  const RB = 1 << 21;
+  instance.exports.axis_rng_fill(RB);
+  const pool = new Uint32Array(memory.buffer.slice(RB, RB + 4096 * 4));
+  // reference LCG (MSVC rand, srand(1))
+  let seed = 1 >>> 0; const rngRef = new Uint32Array(4096);
+  for (let i = 0; i < 4096; i++) { seed = (Math.imul(seed, 214013) + 2531011) >>> 0; rngRef[i] = (seed >>> 16) & 0x7fff; }
+  let rp = 0; for (let i = 0; i < 4096; i++) if (pool[i] === rngRef[i]) rp++;
+  console.log(`\nrng-fill (WASM)      : ${rp}/4096 match the MSVC rand(srand(1)) reference`);
+  const mt = game && path.join(game, 'MATHFUNC.TBL');
+  if (mt && fs.existsSync(mt)) {
+    const raw = fs.readFileSync(mt);
+    const file = new Uint32Array(raw.buffer.slice(raw.byteOffset + 3600 * 12, raw.byteOffset + 3600 * 12 + 4096 * 4));
+    let fp = 0; for (let i = 0; i < 4096; i++) if (pool[i] === file[i]) fp++;
+    console.log(`rng-fill vs MATHFUNC.TBL: ${fp}/4096 match the shipped game pool`);
+    if (fp !== 4096) process.exit(1);
+  }
+  if (rp !== 4096) process.exit(1);
 }
 main().catch(e => { console.error(e); process.exit(1); });
