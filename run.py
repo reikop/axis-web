@@ -109,6 +109,28 @@ def main():
                 json.dump(rindex, f)
             print(f"replays  : {len(rindex)} recorded matches -> web/replays/")
 
+    # index the loose audio (Sound/*.wav, Music/*.mp3) for the audio browser.
+    # Only filenames are written to web/audio.json; the audio is served live
+    # from the user's install via /game/ (nothing is copied or committed).
+    import json
+    audio = {"music": [], "sfx": []}
+    music_dir = os.path.join(game, "Music")
+    if os.path.isdir(music_dir):
+        for fn in sorted(os.listdir(music_dir)):
+            if fn.lower().endswith((".mp3", ".ogg", ".wav")):
+                audio["music"].append("Music/" + fn)
+    sound_dir = os.path.join(game, "Sound")
+    if os.path.isdir(sound_dir):
+        for root, _dirs, files in os.walk(sound_dir):
+            for fn in sorted(files):
+                if fn.lower().endswith((".wav", ".mp3", ".ogg")):
+                    rel = os.path.relpath(os.path.join(root, fn), game).replace(os.sep, "/")
+                    audio["sfx"].append(rel)
+    if audio["music"] or audio["sfx"]:
+        with open(os.path.join(WEB, "audio.json"), "w", encoding="utf-8") as f:
+            json.dump(audio, f)
+        print(f"audio    : {len(audio['music'])} tracks + {len(audio['sfx'])} sfx -> web/audio.json")
+
     # decode textures (PTX -> PNG) for the gallery
     if os.path.isfile(os.path.join(game, "AXIS.EXE")):
         subprocess.call([sys.executable, "-I",

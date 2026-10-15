@@ -397,6 +397,18 @@ No guessed playback is shipped until these are verified.
 The mesh's per-vertex `attr` (4 bytes, §2.8) is the likely bone-index/weight for skinning;
 with verified keyframe playback + that skin binding the meshes can be deformed and animated.
 
+### 2.11 Audio (`Data/Sound.dat`, `Sound/`, `Music/`)
+
+The audio ships as **loose standard files**, not a packed archive: `Music/*.mp3` (23 named
+tracks — "Valhalla", "Netsphere", "Speed of Light", …) and `Sound/**/*.wav` (SFX grouped by
+category: weapon, getitem, alarm, boosters, impact, explode, interface). Both are directly
+playable in a browser with HTML5 `<audio>`; no decoding needed. `Data/Sound.dat` (20 KB,
+encrypted with the §2.3 cipher from offset 0) is the **sound-definition index**: decrypted it
+lists 79 `Sound\<cat>\<clip>.wav` references plus per-definition params (volume/range fields
+and an associated texture/item path). Tool: `tools/parse_sound.py` (decrypt + recover clip
+list). Viewer: `web/audio.html` plays the music + SFX straight from the user's install (served
+by `run.py` at `/game/`; `web/audio.json` holds only filenames — no audio is copied/committed).
+
 ## 4. Next analysis targets
 
 1. Multi-group `.shp` inter-group padding → export the remaining 795 meshes; then wire
