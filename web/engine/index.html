@@ -15,8 +15,9 @@
 <header>
   <h1>AXIS engine — compiled C → WASM, rendering via WebGL</h1>
   <div id="sub">A real Emscripten program (not the decoder reactor): <code>main()</code> opens a GLES2
-  context and renders an AXIS mesh decoded by the linked-in <code>axis_shp.c</code>. Your
-  <code>Data/Shape.dat</code> is fetched locally — nothing is uploaded.</div>
+  context and renders AXIS geometry decoded by the linked-in reconstruction. Your game files are
+  fetched locally — nothing is uploaded. <b>Walk:</b> W/A/S/D move, Q/E (or Space) down/up,
+  arrows or I/J/K/L look, Shift sprint. Try <code>?map=CUBE</code>.</div>
 </header>
 <div id="wrap">
   <canvas id="canvas" width="720" height="480"></canvas>

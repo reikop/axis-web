@@ -26,8 +26,28 @@ int axis_shp_parse(const uint8_t *buf, uint32_t off, uint32_t end,
 
 static GLuint prog, vboPos, vboNrm, ibo;
 static int indexCount = 0;
-static float gAngle = 0.0f;
 static float gCenter[3] = {0, 0, 0}, gRadius = 1.0f;
+
+/* free-fly / first-person camera */
+static float camPos[3] = {0, 0, 0}, camYaw = 0.0f, camPitch = 0.0f, camSpeed = 1.0f;
+static int camReady = 0;
+static unsigned char keyDown[320];
+static double lastT = 0.0;
+
+static void camForward(float *f) {
+    float cp = cosf(camPitch), sp = sinf(camPitch), sy = sinf(camYaw), cy = cosf(camYaw);
+    f[0] = cp * sy; f[1] = sp; f[2] = -cp * cy;
+}
+static void camInit(void) {
+    float f[3] = {0, 0, -1};
+    camYaw = 0.0f; camPitch = -0.35f; camForward(f);
+    float d = gRadius * 2.4f;
+    camPos[0] = gCenter[0] - f[0] * d;
+    camPos[1] = gCenter[1] - f[1] * d;
+    camPos[2] = gCenter[2] - f[2] * d;
+    camSpeed = gRadius * 1.2f;
+    camReady = 1;
+}
 
 /* merged scene buffers (one mesh, or a whole map's placed objects) */
 #define VCAP 900000u
@@ -113,6 +133,7 @@ EMSCRIPTEN_KEEPALIVE int engine_load_mesh(const uint8_t *dat, uint32_t len, uint
     glBindBuffer(GL_ARRAY_BUFFER, vboNrm); glBufferData(GL_ARRAY_BUFFER, vc*3*sizeof(float), NRM, GL_STATIC_DRAW);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo); glBufferData(GL_ELEMENT_ARRAY_BUFFER, tc*3*sizeof(uint32_t), TRI, GL_STATIC_DRAW);
     indexCount = (int)(tc * 3);
+    camInit();
     return (int)CNT[2]; /* group count, as a success signal */
 }
 
@@ -188,35 +209,83 @@ EMSCRIPTEN_KEEPALIVE int engine_load_map(const uint8_t *dat, uint32_t datLen, ui
     glBindBuffer(GL_ARRAY_BUFFER, vboNrm); glBufferData(GL_ARRAY_BUFFER, mergedV*3*sizeof(float), NRM, GL_STATIC_DRAW);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo); glBufferData(GL_ELEMENT_ARRAY_BUFFER, mergedT*3*sizeof(uint32_t), TRI, GL_STATIC_DRAW);
     indexCount = (int)(mergedT * 3);
+    camInit();
     return placed;
 }
 
+static void mat_lookat(float *m, const float *eye, const float *ctr, const float *up) {
+    float f[3] = {ctr[0]-eye[0], ctr[1]-eye[1], ctr[2]-eye[2]};
+    float fl = sqrtf(f[0]*f[0]+f[1]*f[1]+f[2]*f[2]); if (fl < 1e-6f) fl = 1e-6f;
+    f[0]/=fl; f[1]/=fl; f[2]/=fl;
+    float s[3] = {f[1]*up[2]-f[2]*up[1], f[2]*up[0]-f[0]*up[2], f[0]*up[1]-f[1]*up[0]};
+    float sl = sqrtf(s[0]*s[0]+s[1]*s[1]+s[2]*s[2]); if (sl < 1e-6f) sl = 1e-6f;
+    s[0]/=sl; s[1]/=sl; s[2]/=sl;
+    float u[3] = {s[1]*f[2]-s[2]*f[1], s[2]*f[0]-s[0]*f[2], s[0]*f[1]-s[1]*f[0]};
+    m[0]=s[0]; m[4]=s[1]; m[8]=s[2];  m[12]=-(s[0]*eye[0]+s[1]*eye[1]+s[2]*eye[2]);
+    m[1]=u[0]; m[5]=u[1]; m[9]=u[2];  m[13]=-(u[0]*eye[0]+u[1]*eye[1]+u[2]*eye[2]);
+    m[2]=-f[0]; m[6]=-f[1]; m[10]=-f[2]; m[14]=(f[0]*eye[0]+f[1]*eye[1]+f[2]*eye[2]);
+    m[3]=0; m[7]=0; m[11]=0; m[15]=1;
+}
+
 static void frame(void) {
+    double now = emscripten_get_now(); float dt = lastT ? (float)((now - lastT) / 1000.0) : 0.016f; lastT = now;
+    if (dt > 0.1f) dt = 0.1f;
+    if (camReady) {
+        float look = 1.6f * dt;                              /* arrows / IJKL look */
+        if (keyDown['J'] || keyDown[37]) camYaw -= look;     /* 37=Left 39=Right 38=Up 40=Down */
+        if (keyDown['L'] || keyDown[39]) camYaw += look;
+        if (keyDown['I'] || keyDown[38]) camPitch += look;
+        if (keyDown['K'] || keyDown[40]) camPitch -= look;
+        if (camPitch > 1.5f) camPitch = 1.5f; if (camPitch < -1.5f) camPitch = -1.5f;
+        float f[3]; camForward(f);
+        float wup[3] = {0,1,0};
+        float r[3] = {f[1]*wup[2]-f[2]*wup[1], f[2]*wup[0]-f[0]*wup[2], f[0]*wup[1]-f[1]*wup[0]};
+        float rl = sqrtf(r[0]*r[0]+r[1]*r[1]+r[2]*r[2]); if (rl<1e-6f) rl=1e-6f; r[0]/=rl; r[1]/=rl; r[2]/=rl;
+        float v = camSpeed * dt * ((keyDown[16]) ? 3.0f : 1.0f);   /* Shift = sprint */
+        if (keyDown['W']) { camPos[0]+=f[0]*v; camPos[1]+=f[1]*v; camPos[2]+=f[2]*v; }
+        if (keyDown['S']) { camPos[0]-=f[0]*v; camPos[1]-=f[1]*v; camPos[2]-=f[2]*v; }
+        if (keyDown['D']) { camPos[0]+=r[0]*v; camPos[1]+=r[1]*v; camPos[2]+=r[2]*v; }
+        if (keyDown['A']) { camPos[0]-=r[0]*v; camPos[1]-=r[1]*v; camPos[2]-=r[2]*v; }
+        if (keyDown['E'] || keyDown[' ']) camPos[1]+=v;
+        if (keyDown['Q']) camPos[1]-=v;
+    }
     int w, h; emscripten_get_canvas_element_size("#canvas", &w, &h);
     glViewport(0, 0, w, h);
     glClearColor(0.07f, 0.08f, 0.10f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    if (indexCount > 0) {
-        gAngle += 0.01f;
-        float proj[16], view[16], model[16], tmp[16], mvp[16];
-        mat_persp(proj, 1.0f, h ? (float)w/(float)h : 1.0f, gRadius*0.05f, gRadius*20.0f);
-        float d = gRadius * 3.0f;
-        /* view = translate(-0,-0,-d) * rotateY(angle) * translate(-center) */
-        float ry[16] = { cosf(gAngle),0,-sinf(gAngle),0, 0,1,0,0, sinf(gAngle),0,cosf(gAngle),0, 0,0,0,1 };
-        float tr[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, -gCenter[0],-gCenter[1],-gCenter[2],1 };
-        float tz[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,-d,1 };
-        mat_mul(tmp, ry, tr); mat_mul(view, tz, tmp);
-        memcpy(model, ry, sizeof ry);
+    if (indexCount > 0 && camReady) {
+        float proj[16], view[16], mvp[16];
+        mat_persp(proj, 1.1f, h ? (float)w/(float)h : 1.0f, gRadius*0.02f, gRadius*40.0f);
+        float fwd[3]; camForward(fwd);
+        float ctr[3] = {camPos[0]+fwd[0], camPos[1]+fwd[1], camPos[2]+fwd[2]}, up[3] = {0,1,0};
+        mat_lookat(view, camPos, ctr, up);
         mat_mul(mvp, proj, view);
+        float ident[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
         glUseProgram(prog);
         glUniformMatrix4fv(glGetUniformLocation(prog, "uMVP"), 1, GL_FALSE, mvp);
-        glUniformMatrix4fv(glGetUniformLocation(prog, "uModel"), 1, GL_FALSE, model);
+        glUniformMatrix4fv(glGetUniformLocation(prog, "uModel"), 1, GL_FALSE, ident);
         GLint aPos = glGetAttribLocation(prog, "aPos"), aNrm = glGetAttribLocation(prog, "aNrm");
         glBindBuffer(GL_ARRAY_BUFFER, vboPos); glEnableVertexAttribArray(aPos); glVertexAttribPointer(aPos, 3, GL_FLOAT, GL_FALSE, 0, 0);
         glBindBuffer(GL_ARRAY_BUFFER, vboNrm); glEnableVertexAttribArray(aNrm); glVertexAttribPointer(aNrm, 3, GL_FLOAT, GL_FALSE, 0, 0);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
         glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
     }
+}
+
+static EM_BOOL onKey(int type, const EmscriptenKeyboardEvent *e, void *u) {
+    (void)u;
+    int code = -1;
+    const char *k = e->key;
+    if (k[0] && k[1] == 0) {                 /* single char: letters/space */
+        char c = k[0]; if (c >= 'a' && c <= 'z') c -= 32; code = (unsigned char)c;
+    } else if (!__builtin_strcmp(k, "ArrowLeft")) code = 37;
+    else if (!__builtin_strcmp(k, "ArrowUp")) code = 38;
+    else if (!__builtin_strcmp(k, "ArrowRight")) code = 39;
+    else if (!__builtin_strcmp(k, "ArrowDown")) code = 40;
+    else if (!__builtin_strcmp(k, "Shift")) code = 16;
+    else if (!__builtin_strcmp(k, " ")) code = ' ';
+    if (code >= 0 && code < 320) keyDown[code] = (type == EMSCRIPTEN_EVENT_KEYDOWN) ? 1 : 0;
+    return EM_TRUE;
 }
 
 int main(void) {
@@ -231,6 +300,8 @@ int main(void) {
     glAttachShader(prog, compile(GL_FRAGMENT_SHADER, FS));
     glLinkProgram(prog);
     glGenBuffers(1, &vboPos); glGenBuffers(1, &vboNrm); glGenBuffers(1, &ibo);
+    emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, 0, 1, onKey);
+    emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, 0, 1, onKey);
     emscripten_set_main_loop(frame, 0, 1);
     return 0;
 }
