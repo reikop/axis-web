@@ -49,6 +49,19 @@ static int gProjAlive[MAXPROJ], gProjN = 0;
 static float gTgt[MAXTGT*3], gTgtForce[MAXTGT*3];
 static int gTgtAlive[MAXTGT], gTgtN = 0, projDemo = 0;
 
+/* the verified effect/debris layer (port/sim/axis_effect.c) wired in too: a
+ * projectile impact spawns a burst of gravity debris that arcs down and expires. */
+typedef struct { float pos[3], vel[3]; float age, lifetime, trailTimer; } axis_debris_t;
+int axis_debris_step(axis_debris_t *d, float dt,
+                     int (*collide)(const float*, float*, float*, void*), void*,
+                     unsigned (*draw_pool)(void*), void*,
+                     void (*trail)(int, unsigned, void*), void*);
+#define MAXDEBRIS 128
+static axis_debris_t gDebris[MAXDEBRIS];
+static int gDebrisAlive[MAXDEBRIS], gDebrisN = 0;
+static unsigned gDbgSeed = 1u;   /* cheap deterministic spread for debris velocities */
+static float dbg_rand(void) { gDbgSeed = gDbgSeed * 1103515245u + 12345u; return (float)((gDbgSeed >> 16) & 0x7fff) / 32767.0f; }
+
 /* map mode: per-object triangle ranges + each object's shape, so every placed
  * object can be drawn with its own SHAPE\<name> skin (texForShape, keyed by the
  * Shape.dat record index) where one exists, flat otherwise. */
@@ -198,6 +211,25 @@ EMSCRIPTEN_KEEPALIVE void engine_set_avatars(const float *xyz, int n) {
     if (n > MAXAV) n = MAXAV; if (n < 0) n = 0;
     for (int i = 0; i < n * 3; i++) avatars[i] = xyz[i];
     avCount = n;
+}
+
+/* spawn a burst of gravity debris (the verified axis_effect debris layer) at a
+ * projectile impact point; each piece gets an upward+outward kick and arcs down. */
+static void spawn_debris(const float *at) {
+    for (int k = 0; k < 10; k++) {
+        int slot = -1;
+        for (int i = 0; i < MAXDEBRIS; i++) { int j = (gDebrisN + i) % MAXDEBRIS; if (!gDebrisAlive[j]) { slot = j; break; } }
+        if (slot < 0) return;
+        gDebrisN = (slot + 1) % MAXDEBRIS;
+        axis_debris_t *d = &gDebris[slot];
+        d->pos[0] = at[0]; d->pos[1] = at[1]; d->pos[2] = at[2];
+        float sp = gRadius * 0.6f;
+        d->vel[0] = (dbg_rand() - 0.5f) * sp;
+        d->vel[1] = gRadius * 0.4f + dbg_rand() * gRadius * 0.4f;   /* upward kick */
+        d->vel[2] = (dbg_rand() - 0.5f) * sp;
+        d->age = 0.0f; d->lifetime = 1.2f; d->trailTimer = 0.1f;
+        gDebrisAlive[slot] = 1;
+    }
 }
 
 /* Demo: run the reconstructed projectile combat sim in the engine — place a ring
@@ -421,8 +453,16 @@ static void frame(void) {
         /* reconstructed projectile sim running in the engine (?proj) */
         if (projDemo) {
             float sdt = dt > 0.05f ? 0.05f : dt;      /* clamp hitches so homing can't overshoot */
+            int wasAlive[MAXPROJ]; for (int i = 0; i < gProjN; i++) wasAlive[i] = gProjAlive[i];
             axis_sim_tick(gProjs, gProjAlive, gProjN, gTgt, gTgtAlive, gTgtN, gTgtForce,
                           gRadius * 0.06f, 1.0f, 0.0f, sdt);
+            /* a projectile that just resolved spawns a burst of gravity debris */
+            for (int i = 0; i < gProjN; i++) if (wasAlive[i] && !gProjAlive[i]) spawn_debris(gProjs[i].pos);
+            /* advance the debris (verified axis_effect layer); gravity arcs them down */
+            for (int i = 0; i < MAXDEBRIS; i++) {
+                if (!gDebrisAlive[i]) continue;
+                if (axis_debris_step(&gDebris[i], sdt, 0, 0, 0, 0, 0, 0) == 2) gDebrisAlive[i] = 0;
+            }
             int anyLive = 0; for (int i = 0; i < gProjN; i++) if (gProjAlive[i]) anyLive = 1;
             if (!anyLive) engine_proj_demo();                /* loop the demo */
             if (aUV >= 0) glDisableVertexAttribArray(aUV);
@@ -444,6 +484,16 @@ static void frame(void) {
                 glUniform3f(glGetUniformLocation(prog, "uColor"), 0.95f, 0.9f, 0.2f);
                 float *p = gProjs[i].pos;
                 float m[16] = { sp,0,0,0, 0,sp,0,0, 0,0,sp,0, p[0], p[1], p[2], 1 };
+                float mv[16]; mat_mul(mv, mvp, m);
+                glUniformMatrix4fv(uM, 1, GL_FALSE, mv); glUniformMatrix4fv(uMo, 1, GL_FALSE, m);
+                glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
+            }
+            float sd = gRadius * 0.012f;
+            for (int i = 0; i < MAXDEBRIS; i++) {            /* gravity debris: small orange cubes */
+                if (!gDebrisAlive[i]) continue;
+                glUniform3f(glGetUniformLocation(prog, "uColor"), 1.0f, 0.55f, 0.1f);
+                float *p = gDebris[i].pos;
+                float m[16] = { sd,0,0,0, 0,sd,0,0, 0,0,sd,0, p[0], p[1], p[2], 1 };
                 float mv[16]; mat_mul(mv, mvp, m);
                 glUniformMatrix4fv(uM, 1, GL_FALSE, mv); glUniformMatrix4fv(uMo, 1, GL_FALSE, m);
                 glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
