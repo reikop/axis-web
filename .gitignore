@@ -1,0 +1,47 @@
+# ─────────────────────────────────────────────────────────────
+#  COPYRIGHTED GAME DATA — NEVER COMMIT.
+#  This project ships only our own code. Users must supply their
+#  own legally-owned copy of AXIS. Everything below is the
+#  original game's property and must stay out of the repository.
+# ─────────────────────────────────────────────────────────────
+*.dat
+*.bfd
+*.ape
+*.mp3
+*.wav
+*.exe
+*.dll
+*.EXE
+*.DLL
+*.ico
+*.ICO
+*.tbl
+*.TBL
+*.scp
+/game/
+/gamedata/
+/AXIS_original/
+
+# extracted / converted assets derived from the above (also copyrighted)
+/extracted/
+/out/
+*.gltf
+*.glb
+*.png
+*.ktx2
+
+# build artifacts
+/build/
+/dist/
+node_modules/
+__pycache__/
+*.pyc
+*.wasm
+*.o
+*.a
+
+# editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
