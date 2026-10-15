@@ -173,6 +173,8 @@
     statusEl.textContent = '';
     let maps = [];
     try { maps = await (await fetch('/maps/index.json')).json(); } catch (_) {}
+    let reps = [];
+    try { reps = (await (await fetch('/replays/index.json')).json()).map(r => r.name || r); } catch (_) {}
     const wrap = document.getElementById('wrap');
     const menu = document.createElement('div');
     menu.style.cssText = 'max-width:720px;width:100%;background:#111417;border:1px solid #262b31;border-radius:8px;padding:18px;box-sizing:border-box';
@@ -188,6 +190,11 @@
         <button id="play" ${maps.length ? '' : 'disabled'} style="background:#24405f;color:#dbeafe;border:1px solid #2f5a86;border-radius:6px;padding:8px 16px;cursor:pointer;font-weight:600">&#9654; Play (walk + simulation)</button>
         <button id="walk" ${maps.length ? '' : 'disabled'} style="background:#1b2026;color:#cdd3da;border:1px solid #2a3139;border-radius:6px;padding:8px 16px;cursor:pointer">Walk only</button>
       </div>
+      ${reps.length ? `<div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <label style="color:#9aa3ad">Recorded match</label>
+        <select id="repsel" style="background:#1b2026;color:#cdd3da;border:1px solid #2a3139;border-radius:6px;padding:6px 10px">${reps.map(r => `<option value="${r}">${r}</option>`).join('')}</select>
+        <button id="watch" ${maps.length ? '' : 'disabled'} style="background:#1b2026;color:#cdd3da;border:1px solid #2a3139;border-radius:6px;padding:8px 16px;cursor:pointer">&#9654; Watch replay in 3D</button>
+      </div>` : ''}
       <div style="margin-top:14px;color:#6a727c;font-size:12px;line-height:1.7">
         <b style="color:#9aa3ad">Controls</b><br>
         W A S D &mdash; move (stops at walls) &middot; Q / E / Space &mdash; down / up &middot; Shift &mdash; sprint<br>
@@ -196,9 +203,10 @@
     wrap.insertBefore(menu, wrap.firstChild);
     canvas.style.display = 'none'; document.getElementById('row').style.display = 'none';
     const go = (extra) => { location.href = location.pathname + '?map=' + encodeURIComponent(document.getElementById('mapsel').value) + extra; };
-    const pb = document.getElementById('play'), wb = document.getElementById('walk');
+    const pb = document.getElementById('play'), wb = document.getElementById('walk'), rb = document.getElementById('watch');
     if (pb) pb.onclick = () => go('&proj');
     if (wb) wb.onclick = () => go('');
+    if (rb) rb.onclick = () => go('&replay=' + encodeURIComponent(document.getElementById('repsel').value));
   }
 
   // Real game sound effects from the user's own Sound/ (Web Audio): a homing-missile
