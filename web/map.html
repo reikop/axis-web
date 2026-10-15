@@ -45,6 +45,12 @@
     <div class="stat" id="stats"></div>
     <label class="rowc"><input type="checkbox" id="meshes" checked> render meshes</label>
     <label class="rowc"><input type="checkbox" id="wire"> wireframe</label>
+    <div style="border-top:1px solid var(--line);padding-top:12px;margin-top:2px">
+      <label>Multiplayer</label>
+      <input id="mpurl" type="text" value="ws://127.0.0.1:8140" style="width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:7px 9px;font:12px/1 var(--mono);margin-bottom:7px">
+      <button id="mpbtn" style="width:100%;background:var(--accent);color:#06141a;border:0;border-radius:8px;padding:8px;font:600 13px/1 var(--sans);cursor:pointer">Connect</button>
+      <div id="mpstat" style="margin-top:7px;font:12px/1.4 var(--mono);color:var(--muted)"></div>
+    </div>
     <div class="hint">Drag to orbit · wheel to zoom · <b>WASD</b> move, <b>R/F</b> up/down to
       walk the map. Each placed object is its real Shape.dat mesh at its map position.</div>
     <div class="hint"><a href="index.html">← archive explorer</a> · <a href="shape.html">mesh viewer →</a></div>
@@ -119,6 +125,23 @@ function draw(){
       ctx.fillStyle=col.replace("hsl","hsla").replace(")",`,1)`);
       ctx.globalAlpha=1; ctx.fillStyle=shade(col,sh); ctx.fill(); }
   }
+  drawAvatars();
+}
+// --- remote players (multiplayer) ---
+function drawAvatars(){
+  const pole=ext/9;
+  for(const [id,p] of MP.players){
+    const base=proj(rot(p.pos[0],p.pos[1],p.pos[2]));
+    const top=proj(rot(p.pos[0],p.pos[1]+pole,p.pos[2]));
+    if(!base||!top) continue;
+    const col=`hsl(${(id*67)%360} 85% 60%)`;
+    ctx.strokeStyle=col; ctx.lineWidth=3*DPR; ctx.globalAlpha=1;
+    ctx.beginPath(); ctx.moveTo(base[0],base[1]); ctx.lineTo(top[0],top[1]); ctx.stroke();
+    ctx.fillStyle=col; ctx.beginPath(); ctx.arc(top[0],top[1],5*DPR,0,7); ctx.fill();
+    ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue("--fg");
+    ctx.font=`${11*DPR}px ui-monospace,monospace`; ctx.textAlign="center";
+    ctx.fillText("P"+id, top[0], top[1]-9*DPR); ctx.textAlign="left";
+  }
 }
 function shade(hsl,f){ const m=hsl.match(/hsl\((\d+) (\d+)% (\d+)%\)/); if(!m) return hsl;
   return `hsl(${m[1]} ${m[2]}% ${Math.round(+m[3]*f)}%)`; }
@@ -188,6 +211,42 @@ addEventListener("keydown",e=>{
   else if(k==="r")m=[0,1,0]; else if(k==="f")m=[0,-1,0];
   if(m){ center=[center[0]+m[0]*step,center[1]+m[1]*step,center[2]+m[2]*step]; draw(); e.preventDefault(); }
 });
+
+// --- multiplayer client: connect to the AXIS relay (server/relay.js) ---
+const MP={ws:null,id:-1,players:new Map(),timer:0};
+function mpSendPos(){
+  if(!MP.ws||MP.ws.readyState!==1) return;
+  const pkt=new ArrayBuffer(64), dv=new DataView(pkt);
+  dv.setUint8(0,70); dv.setUint8(2,MP.id&0xff);        // opcode + actor (SPEC §4 layout)
+  dv.setFloat32(9,center[0],true); dv.setFloat32(13,center[1],true); dv.setFloat32(17,center[2],true);
+  MP.ws.send(pkt);
+}
+function mpStat(t){document.getElementById("mpstat").innerHTML=t;}
+function mpConnect(){
+  const btn=document.getElementById("mpbtn");
+  if(MP.ws){ MP.ws.close(); return; }
+  const url=document.getElementById("mpurl").value.trim();
+  let ws; try{ ws=new WebSocket(url); ws.binaryType="arraybuffer"; }catch(e){ mpStat("bad url"); return; }
+  MP.ws=ws; btn.textContent="Connecting…";
+  ws.onopen=()=>{ btn.textContent="Disconnect"; mpStat("connected"); MP.timer=setInterval(mpSendPos,80); };
+  ws.onclose=()=>{ clearInterval(MP.timer); MP.ws=null; MP.id=-1; MP.players.clear(); btn.textContent="Connect"; mpStat("disconnected"); draw(); };
+  ws.onerror=()=>{ mpStat("connection error"); };
+  ws.onmessage=(ev)=>{
+    const b=new Uint8Array(ev.data);
+    if(b.length===2 && b[0]===0xff){ MP.id=b[1]; mpStat(`you are <b style="color:var(--accent)">P${MP.id}</b>`); return; }
+    if(b.length>=5+18){ const dv=new DataView(ev.data);
+      const actor=dv.getUint8(4);
+      const x=dv.getFloat32(5+9,true),y=dv.getFloat32(5+13,true),z=dv.getFloat32(5+17,true);
+      if(Number.isFinite(x)) MP.players.set(actor,{pos:[x,y,z],t:Date.now()});
+      const others=MP.players.size;
+      mpStat(`you are <b style="color:var(--accent)">P${MP.id}</b> · ${others} other${others===1?"":"s"} in map`);
+      draw();
+    }
+  };
+}
+document.getElementById("mpbtn").addEventListener("click",mpConnect);
+// drop stale players
+setInterval(()=>{const now=Date.now();let ch=false;for(const[id,p]of MP.players)if(now-p.t>4000){MP.players.delete(id);ch=true;}if(ch)draw();},2000);
 
 Promise.all([
   fetch("shapes/index.json").then(r=>r.ok?r.json():[]).catch(()=>[]),
