@@ -443,7 +443,8 @@ with verified keyframe playback + that skin binding the meshes can be deformed a
    The type-1 packet's four floats are small **normalised values (0..1)** (per-tick control
    inputs / aim), not world coordinates, and it also carries RNG samples from a shared table.
 
-   **Packet-type catalogue (three builders decoded, VALIDATED on all replays):**
+   **Packet-type catalogue — ALL 6 builders decoded, types validated on the replays.**
+   Every builder writes the type to `payload[1]` then calls `pnSendPacketData(0x40,&buf)`.
    * **Type 0** — `FUN_0048d750`, the per-tick **STATE SNAPSHOT** and ~96% of all traffic:
      `[4]` = `(actor<<4)|mode` (so **actor = `[4]>>4`**), `[5]/[7]/[9]` = **int16 quantised
      world position x,y,z** (`__ftol` of the float coords), `[0xb..0x12]` orientation/velocity
@@ -455,7 +456,17 @@ with verified keyframe playback + that skin binding the meshes can be deformed a
    * **Type 2** — `FUN_0048d580`, player **IDENTITY/loadout**: name string `[2..18]`, actor
      `[22]`, ~11 equipment ids `[23..33]` (+1 encoded), 20-byte stat/appearance block. (Real
      handles recovered from the replays: "OneShotOneKill", "onlynike", "efreet", "k'".)
-   * **Type 12** — session/control (rare).
+   * **Types 3,4,5,6,9,13** — `FUN_0048db10` (a multiplexer draining control-event queues):
+     short **notification/command** packets, `[2]`(+`[3]`) small params; several use the
+     constant `[2]=0x6b`.
+   * **Types 7,8,10,11** — also `FUN_0048db10`: **text/string messages** (chat / player name /
+     clan), each `strcpy`s a NUL-terminated string into the payload after a 1–2 byte header.
+   * **Type 12 (0xc)** — `FUN_0048de20`: **join/session bulk sync** — `[2]`=actor, `[3..4]`=
+     cursor, `[5..]`=48-byte chunk (16×3 bytes) streamed from a per-actor 384-entry buffer,
+     cursor advancing until exhausted (3× in the short replay, 27× in the longer ones).
+   * **Type 14 (0xe)** — `FUN_0048df60`: **HP/status snapshot** — for up to 124 entities
+     (stride 0x28) a clamped `value/10+1` (0..15) packed as a 4-bit **nibble**, two per byte,
+     into a 62-byte field.
 
    **Architecture (corrected — this supersedes an earlier note that called it pure lockstep):**
    AXIS **replicates state**: each actor's quantised world position + weapon state is broadcast
@@ -470,10 +481,11 @@ with verified keyframe playback + that skin binding the meshes can be deformed a
    encrypted write `FUN_0046c0b0` — so **`.ape` replays are recorded packet streams**
    (decryptable with §2.3). **Record format (verified):** a ~60-byte header then a stream of
    **76-byte records** `[u32 tick][u32 arg][u32 0x40][64-byte payload]` (12+64). All three
-   `AutoPlay\*.ape` decrypt whole (version `0x1201`); each has **three real players**
-   (actors 0,1,2) and a consistent type histogram — type **0** idle/keepalive (~96%),
-   **1** player-action, **2** event, **12** session. Tool: `tools/parse_ape.py` (decodes the
-   validated layout: per-actor input vectors + action bitmasks + type census).
+   `AutoPlay\*.ape` decrypt whole (version `0x1201`); each has **three real players** and a
+   consistent type histogram — type **0** state/position (~96%), **1** input, **2** identity,
+   **12** join-sync. Tool: `tools/parse_ape.py` (decodes type-0 trajectories + type-2 names +
+   type census); JS port `web/ape.js` (byte-exact, `tools/verify_ape_js.js`) powers the
+   in-browser match replay viewer `web/replay.html`.
 
    **Recv/dispatch** (`FUN_004a7ab0`): dequeues 64-byte packets from the per-channel ring
    buffers (`DAT_00af0b70`, 0x10 channels × 0x80 slots × 0x40 bytes), tracking per-channel
@@ -483,8 +495,11 @@ with verified keyframe playback + that skin binding the meshes can be deformed a
    **send** (`pnSendPacketData`) and **recv** (`FUN_004a7ab0`) sides of the transport are
    mapped; a `tools/`-side `.ape` replay decoder + the `server/relay.js` relay already
    implement this model end-to-end (verified two-client shared-map multiplayer in the browser,
-   see `../server/README.md`). Remaining: per-packet-type field semantics (actions, spawns,
-   hits) for server-authoritative game logic.
+   see `../server/README.md`). **All 6 outbound packet builders are now decoded** (the
+   catalogue above), so the outbound protocol is fully mapped. Remaining for
+   server-authoritative play: the inbound *application* of each packet (how a received type-1
+   input + RNG advances the deterministic combat/damage sim) — i.e. the game simulation itself,
+   not the wire format.
 5. (optional) full PTX block decoder for a standalone PNG extractor — done (`tools/ptx_decode.py`).
 
 See `../port/README.md` for how these feed the approach-B WASM build.
