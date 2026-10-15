@@ -73,3 +73,35 @@ void axis_proj_step(float *pos, float *vel, const float *target,
     vel[0]=nv[0]; vel[1]=nv[1]; vel[2]=nv[2];
     pos[0]+=vel[0]*dt; pos[1]+=vel[1]*dt; pos[2]+=vel[2]*dt;
 }
+
+/* A homing-projectile entity (the understood physics fields of the FUN_00479750
+ * entity record): position, velocity, owner, locked target index (-1 = none),
+ * age/lifetime, and the weapon's speed + turn rate. */
+typedef struct {
+    float pos[3], vel[3];
+    int   owner, target;
+    float age, lifetime, speed, turnRate;
+} axis_proj_t;
+
+/* One complete projectile tick (physics core of FUN_00479750, minus GL trails
+ * and map collision which belong to other subsystems): acquire a target if none
+ * is locked, steer+integrate toward it, and age the projectile. Returns 1 while
+ * alive, 0 once its lifetime is spent. `actors`/`active`/`n` are the actor array
+ * for acquisition; `maxRange` the lock range. */
+int axis_acquire_target(const float *pos, const float *actors, const int *active,
+                        int n, int owner, float maxRange);
+EXPORT
+int axis_proj_update(axis_proj_t *p, const float *actors, const int *active, int n,
+                     float maxRange, float dt) {
+    p->age += dt;
+    if (p->age >= p->lifetime) return 0;
+    if (p->target < 0 || p->target >= n || !active[p->target])
+        p->target = axis_acquire_target(p->pos, actors, active, n, p->owner, maxRange);
+    if (p->target >= 0) {
+        const float *t = actors + p->target * 3;
+        axis_proj_step(p->pos, p->vel, t, p->turnRate * dt, p->speed, dt);
+    } else {
+        p->pos[0]+=p->vel[0]*dt; p->pos[1]+=p->vel[1]*dt; p->pos[2]+=p->vel[2]*dt;  /* fly straight */
+    }
+    return 1;
+}
