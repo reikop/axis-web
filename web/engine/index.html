@@ -233,7 +233,7 @@
           hud.style.display = 'block'; cross.style.display = 'block';
           const base = `<b>${mapName}</b> &middot; ${placed} objects` + (sim ? ' &middot; <b>F</b> fire' : '');
           hud.innerHTML = base;
-          if (sim) setInterval(() => { try { hud.innerHTML = base + ` &middot; pickups ${M.ccall('engine_pickups', 'number', [], [])}`; } catch (_) {} }, 250);
+          if (sim) setInterval(() => { try { hud.innerHTML = base + ` &middot; <b>destroyed ${M.ccall('engine_score', 'number', [], [])}</b> &middot; pickups ${M.ccall('engine_pickups', 'number', [], [])}`; } catch (_) {} }, 250);
         }
         if (placed >= 0 && qs.has('proj')) {           // ?proj -> run the reconstructed projectile sim in-engine
           M.ccall('engine_proj_demo', null, [], []);

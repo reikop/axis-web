@@ -71,6 +71,8 @@ static int gDebrisAlive[MAXDEBRIS], gDebrisN = 0;
 int axis_seg_aabb(const float *a, const float *b, const float *bmin, const float *bmax, float *tEnter);
 int axis_seg_tri(const float *p0, const float *p1, const float *a, const float *b,
                  const float *c, float *outT, float *hit);
+int axis_seg_sphere(const float *p0, const float *p1, const float *centre, float radius, float *outT);
+static int gScore = 0;   /* targets destroyed by player shots */
 static float gMapMin[3] = {0,0,0}, gMapMax[3] = {0,0,0};
 static float gProjPrev[MAXPROJ][3];
 
@@ -308,6 +310,9 @@ EMSCRIPTEN_KEEPALIVE int engine_pickups(void) { return gPickupCount; }
 /* monotonic impact-burst count, polled by the page to play an explosion SFX. */
 EMSCRIPTEN_KEEPALIVE int engine_impacts(void) { return gImpactCount; }
 
+/* targets destroyed by player shots (HUD score). */
+EMSCRIPTEN_KEEPALIVE int engine_score(void) { return gScore; }
+
 /* Decode one Shape.dat record into a dedicated entity-mesh buffer, so the demo
  * can draw its targets as a real AXIS model instead of a cube. Stores the mesh
  * centre/radius so it can be scaled to a consistent on-screen size. */
@@ -386,7 +391,7 @@ EMSCRIPTEN_KEEPALIVE void engine_proj_demo(void) {
         gItemAlive[i] = 1;
     }
     for (int i = 0; i < MAXSHOTS; i++) gShotAlive[i] = 0;
-    projDemo = 1;
+    projDemo = 1;   /* gScore is cumulative across re-seeds (starts 0 at load) */
 }
 
 static inline float rf32e(const uint8_t *p) { float v; __builtin_memcpy(&v, p, 4); return v; }
@@ -607,8 +612,16 @@ static void frame(void) {
                 wasAlive[i] = gProjAlive[i];
                 if (gProjAlive[i]) { gProjPrev[i][0]=gProjs[i].pos[0]; gProjPrev[i][1]=gProjs[i].pos[1]; gProjPrev[i][2]=gProjs[i].pos[2]; }
             }
+            for (int t = 0; t < gTgtN; t++) { gTgtForce[t*3]=0; gTgtForce[t*3+1]=0; gTgtForce[t*3+2]=0; }
             axis_sim_tick(gProjs, gProjAlive, gProjN, gTgt, gTgtAlive, gTgtN, gTgtForce,
                           gRadius * 0.06f, 1.0f, 0.0f, sdt);
+            /* a homing projectile that struck a target this tick (verified sim applied
+               knockback -> nonzero force) destroys it and scores */
+            for (int t = 0; t < gTgtN; t++) {
+                if (!gTgtAlive[t]) continue;
+                float *fo = &gTgtForce[t*3];
+                if (fo[0]*fo[0] + fo[1]*fo[1] + fo[2]*fo[2] > 0.0f) { gTgtAlive[t] = 0; gScore++; spawn_debris(&gTgt[t*3]); }
+            }
             /* a projectile still flying that struck map geometry this step is
                consumed at the impact point (reconstructed collision pipeline) */
             for (int i = 0; i < gProjN; i++) {
@@ -683,13 +696,21 @@ static void frame(void) {
                     pv[0]=p[0]; pv[1]=p[1]; pv[2]=p[2];
                     p[0]+=vv[0]*sdt; p[1]+=vv[1]*sdt; p[2]+=vv[2]*sdt;
                     gShotAge[s]+=sdt;
-                    float hp[3];
-                    if (proj_hit_map(pv, p, hp)) { spawn_debris(hp); gShotAlive[s]=0; }
+                    float hp[3], tt;
+                    /* hit a target? (verified axis_seg_sphere) -> destroy it + score */
+                    int hitTgt = -1;
+                    for (int t = 0; t < gTgtN; t++) {
+                        if (!gTgtAlive[t]) continue;
+                        if (axis_seg_sphere(pv, p, &gTgt[t*3], gRadius * 0.12f, &tt)) { hitTgt = t; break; }
+                    }
+                    if (hitTgt >= 0) { gTgtAlive[hitTgt] = 0; gScore++; spawn_debris(&gTgt[hitTgt*3]); gShotAlive[s] = 0; }
+                    else if (proj_hit_map(pv, p, hp)) { spawn_debris(hp); gShotAlive[s]=0; }
                     else if (gShotAge[s] > 2.5f) gShotAlive[s]=0;
                 }
             }
             int anyLive = 0; for (int i = 0; i < gProjN; i++) if (gProjAlive[i]) anyLive = 1;
-            if (!anyLive) engine_proj_demo();                /* loop the demo */
+            int anyTgt = 0; for (int i = 0; i < gTgtN; i++) if (gTgtAlive[i]) anyTgt = 1;
+            if (!anyLive || !anyTgt) engine_proj_demo();     /* loop the demo / rearm when cleared */
             if (aUV >= 0) glDisableVertexAttribArray(aUV);
             glBindBuffer(GL_ARRAY_BUFFER, vboCube);  glEnableVertexAttribArray(aPos); glVertexAttribPointer(aPos, 3, GL_FLOAT, GL_FALSE, 0, 0);
             glBindBuffer(GL_ARRAY_BUFFER, vboCubeN); glEnableVertexAttribArray(aNrm); glVertexAttribPointer(aNrm, 3, GL_FLOAT, GL_FALSE, 0, 0);
