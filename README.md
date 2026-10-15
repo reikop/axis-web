@@ -9,10 +9,10 @@ WebSocket platform shim (approach B — see `port/README.md`).
 > the original data, and a compiled-C → WebGL **engine** renders real textured maps and meshes,
 > is **walkable** (WASD + mouse-look), plays the game's music, and does **real-protocol
 > multiplayer**. The movement model and the RNG lockstep determinism are reconstructed and
-> **verified against recorded matches**. AXIS is a client for a server-authoritative game, so the
-> combat resolution (collision/hit-detection/damage) was **server-side code, never part of the
-> shipped client** — the client itself is fully reconstructed; that defunct server is the only
-> thing absent, and it isn't in `AXIS.EXE` to port (details below).
+> **verified against recorded matches**. The port is **not yet complete**: the client's per-entity
+> movement/physics tick (`FUN_00479750`, ~10 KB of vector math) is real code in `AXIS.EXE` and is
+> **not yet reconstructed** — that is the honest remaining pillar (details below). Damage *scoring*
+> is server-authoritative (the client only applies received HP).
 
 ## Quick start (local)
 
@@ -52,25 +52,29 @@ the game's data directory is ever committed (see `.gitignore`: `*.dat`, `*.bfd`,
 | 3. Platform shim | window/loop, keyboard, mouse, audio, networking | ✔ all pillars, 0 page-errors |
 | 4. Network | §4 protocol → `server/relay.js` + WebSocket, real-protocol multiplayer | ✔ engine + `web/map.html`, verified vs a relay + ghost |
 | 5. Movement + determinism | reconstruct + verify motion and RNG from recorded matches | ✔ `tools/verify_motion.js` (const-velocity) + `tools/verify_rng.js` (RNG lockstep **247/247**) |
-| 6. Authoritative combat | collision / weapon hit-detection / damage | server-side — **not in the client** (see below) |
+| 6. Per-entity simulation | the per-tick movement/physics step (`FUN_00479750`) | ◻ **in the client, large, not yet reconstructed** (see below) |
 
-### Why "combat simulation" isn't a missing client module
+### The genuinely unfinished pillar: the per-entity simulation
 
-AXIS is a client for a server-authoritative online game. The client **sends** input and **receives**
-its combat results as state — positions (type-0) and **HP (type-14)** — and *applies* them; it does
-not compute collision/hit-detection/damage. Decoding the functions once labelled the "per-tick combat
-sim" confirms this: they turn out to be client per-frame helpers — `FUN_004962d0` is an animation
-frame-advance timer, `FUN_0048f1e0` a scene loader — not physics (see `docs/SPEC.md §5`). So the
-authoritative combat resolution lived in the **AxisArena server**, a separate program that is not part
-of the shipped `AXIS.EXE` and no longer exists (the 2005 servers are gone; the client can't even reach
-a match — it stalls at "INITIALIZING NETSPHERE").
+The port is **not** 100% complete, and I won't pretend otherwise. The client runs a substantial
+per-entity simulation each tick: `FUN_0047c480` loops the active entities and calls **`FUN_00479750`**
+— ~10 KB / 133 blocks of heavy floating-point (vector math, `sqrt`, ~400 float temporaries) over the
+actor state block. That is real movement/physics code **in `AXIS.EXE`**, and it is **not yet
+reconstructed**. (Two sibling functions earlier mislabelled as combat sim really are only helpers —
+`FUN_004962d0` an animation frame-timer, `FUN_0048f1e0` a scene loader — but `FUN_00479750` is the
+real thing; an earlier draft of these docs wrongly claimed the whole sim was server-side, and that is
+retracted.)
 
-What the **client** actually does is fully reconstructed and, where recorded matches give ground-truth,
-verified: state application, the deterministic **RNG participation** (type-1 spawn/param draws, verified
-247/247 against a real match), **movement** kinematics (verified), animation, and rendering. There is
-no client-side combat-physics code to port; inventing the server's logic with no ground-truth would be
-a guess, which this project does not ship. So the **client port is complete** — the "missing" piece is
-a defunct server, not an unfinished part of the client.
+What **is** done and verified: state application, the deterministic **RNG participation** (type-1
+spawn/param draws, verified **247/247** against a real match), **movement kinematics** (verified
+const-velocity), animation and rendering. Damage/hit *scoring* is server-authoritative (the client
+only applies type-14 HP), but the local per-entity tick is client code a full port must reconstruct.
+
+Reconstructing `FUN_00479750` (plus its callees and the full state-block field layout) is a large
+multi-function effort; because the RNG stream is deterministic and verified, a reconstruction could be
+checked by replaying a recorded match's inputs/RNG against the recorded positions. That work is
+outstanding — left honestly unfinished rather than guess-filled, so nothing in this repo is presented
+as verified that isn't.
 
 ## Build the engine (Emscripten)
 

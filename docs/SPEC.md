@@ -658,22 +658,26 @@ inbound packets (§4): `FUN_004962d0`, `FUN_0047c480`, `FUN_00478f10`, `FUN_0048
 actor*0x8888`) whose fields the type-0 apply writes (position `+0x1ac/1b0/1b4`, orientation
 `+0x1b8/1bc/1cc`, velocity, weapon sub-records).
 
-**CORRECTION (2026-10-16) — these are client per-frame helpers, NOT the authoritative combat
-physics.** Decoding them shows the earlier "movement/physics/weapons/collision/damage" labels were
-wrong: `FUN_004962d0` is an **animation/effect frame-advance timer** (accumulates `dt*0.025` into
-frame counters, plus a 16-step cycle at `dt*15.0` — this also supplies the animation time base left
-open in §2.10); `FUN_0048f1e0` is a **scene loader/manager** (references `"Scene"`, `"scenePath=%s"`,
-`FUN_00456510` scene load). They're small (138–218 bytes) scene/animation update helpers gated by a
-shared `scene-active` flag (`0x2149308`), not collision/damage math. Together with the client
-*receiving* its combat results as state — positions via type-0 and **HP via type-14** (it applies,
-it does not compute them) — this says the **authoritative combat resolution (collision, weapon
-hit-detection, damage) is server-side and is not present as such in the shipped client binary**.
-The client's own role — deterministic RNG participation (the type-1 spawn/param draws, §4, VERIFIED
-247/247), state application, prediction, animation and rendering — **is reconstructed and verified**.
-So "reconstruct the combat physics from the client" has no target in `AXIS.EXE`: that computation
-lived in the defunct AxisArena **server**, which was never part of what ships here. The client port
-is therefore complete; what's absent is a different, now-defunct program, not an unfinished client
-module.
+**NOTE (2026-10-16) — the roles, correctly identified (an earlier edit over-claimed; this corrects
+it).** Decoding the chain: **two** of the entries are indeed only client helpers — `FUN_004962d0`
+is an **animation/effect frame-advance timer** (`dt*0.025` frame counters + a 16-step `dt*15.0`
+cycle; this also supplies the animation time base left open in §2.10) and `FUN_0048f1e0` is a
+**scene loader/manager** (`"Scene"`, `"scenePath=%s"`). **But `FUN_0047c480` is a per-entity
+dispatcher** — it loops the active entities (count `0x20a99b4`, stride `0x4e8`) and calls
+**`FUN_00479750`**, which is **the per-entity simulation and it *is* in the client**: ~10 KB / 133
+blocks of heavy floating-point (≈400 float temps, `float10`/SQRT vector math, 60+ float locals)
+operating on the actor state block (`*0x8888`). So the client **does** run a substantial per-entity
+movement/physics step — the claim that "the combat sim is wholly server-side / absent from the
+client" was WRONG and is retracted. What IS established: the client applies received combat *results*
+as state (positions type-0, **HP type-14** — it does not compute damage, so hit-resolution/scoring is
+server-authoritative), and the client's deterministic RNG participation (§4, VERIFIED 247/247) and
+movement kinematics are reconstructed+verified; but the per-entity sim `FUN_00479750` (+ its ~10
+callees + the full `0x8888` state-block layout) is **large and NOT yet reconstructed**. This is the
+genuinely unfinished pillar: it is reconstructable in principle (the code is in the binary), and —
+because the RNG stream is deterministic and verified — a reconstruction could even be checked by
+re-running it against a replay's inputs/RNG and comparing to the recorded positions; doing so is a
+major multi-function effort (10 KB of vector math + reverse the state-block field layout) that is not
+finished here.
 
 Behaviour-exact reconstruction of these + verification. **Update:** the **Emscripten toolchain
 is now set up and working** (Ubuntu/WSL2, `emcc 3.1.69`, `node v22`) — `port/build.sh` compiles
@@ -720,11 +724,15 @@ draw two consecutive values of the shared `MSVC rand(srand(1))` pool per packet,
 all **247/247** drawing packets match that pool at a unique index — the lockstep RNG that makes
 every peer's spawns/rolls identical, confirmed on real recorded play. So two pillars of the sim —
 the **movement kinematics** and the **RNG determinism** — are reconstructed and verified against
-ground-truth. The rest — collision, weapon hit-detection, damage — is **not a client function at
-all**: per the correction above, the client *receives* those results as state (type-0 positions,
-type-14 HP) and the authoritative computation is server-side, absent from the shipped `AXIS.EXE`.
-So it is not an unfinished client module left out, but a different, now-defunct server program that
-was never part of what ships here; reconstructing it from the client has no target, and inventing
-it would be a guess with no ground-truth, which this project does not do.
+ground-truth. The rest — the per-entity movement/physics step — **is a client function**:
+`FUN_00479750` (dispatched by `FUN_0047c480`), ~10 KB of float/vector math over the `0x8888` state
+block (see the note above). It is **large and not yet reconstructed**, and that is the honest
+remaining pillar of the port. Hit-resolution/damage *scoring* is server-authoritative (the client
+only applies type-14 HP), but the local per-entity simulation the client does run is real code in
+`AXIS.EXE` that a full port must reconstruct. Reconstructing `FUN_00479750` faithfully (plus its
+callees and the state-block field layout) is a substantial multi-function effort; it is not done
+here, and — since this project ships nothing it can't verify — it is left reconstructed only as far
+as the parts the replays can ground-truth (movement kinematics, RNG determinism), with the full
+per-entity tick honestly outstanding rather than guessed.
 
 See `../port/README.md` for how these feed the approach-B WASM build.
