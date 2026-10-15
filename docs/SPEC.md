@@ -637,8 +637,19 @@ writes (position `+0x1ac/1b0/1b4`, orientation `+0x1b8/1bc/1cc`, velocity, weapo
 These are the concrete functions to reconstruct next, each landing as a `port/src/*.c` module
 (the pattern `axis_crypt.c` / `axis_netdecode.c` already follow) for the Emscripten/WASM build.
 
-Behaviour-exact reconstruction of these + verification needs either the Emscripten toolchain
-(WSL) or a dynamic trace of the running game for ground-truth values — the honest boundary of
-what the static, no-toolchain environment that produced this repo can finish.
+Behaviour-exact reconstruction of these + verification. **Update:** the **Emscripten toolchain
+is now set up and working** (Ubuntu/WSL2, `emcc 3.1.69`, `node v22`) — `port/build.sh` compiles
+the reconstructed C to a verified standalone WASM module (see `../port/README.md`), so the
+*compiler* half of the old boundary is gone; the larger pieces (and these sim functions) can now
+actually be built. What still blocks a behaviour-exact sim is **ground-truth to verify against**:
+the per-tick functions only execute inside a live match, and this offline install cannot reach
+one — re-tested 2026-10-16, a fresh `AXIS.EXE` stalls at the "INITIALIZING NETSPHERE" screen and,
+even with a loopback listener up on `:7777`/`:7778`, makes **no `connect`/`socket`/DNS and no
+game-level send/recv in 60 s** (the busy `WSAGetLastError` churn is all inside transient system
+DLLs, never AXIS's own net code). So it blocks *before* the client's own connect logic — the
+lobby/live-match, and with it the map building/terrain-texture binding (§2.9) and the animation
+time-base (§2.10), stay unreachable by dynamic capture here. Those are the genuine remaining
+frontier; the data-decode reconstructions (archive/PTX/.shp/.bfd) are instead verifiable offline
+against the JS/Python references and are the natural next `port/src/*.c` modules.
 
 See `../port/README.md` for how these feed the approach-B WASM build.
