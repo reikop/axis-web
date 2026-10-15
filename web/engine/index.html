@@ -242,7 +242,7 @@
         const [shape, bfd] = await Promise.all([fetchU8('/game/Data/Shape.dat'), fetchU8('/game/Map/' + mapName + '.bfd')]);
         const sp = toWasm(M, shape), bp = toWasm(M, bfd);
         const placed = M.ccall('engine_load_map', 'number', ['number', 'number', 'number', 'number'], [sp, shape.length, bp, bfd.length]);
-        if (placed >= 0 && qs.has('proj')) {                 // draw the demo targets as a real AXIS model (ALIEN\GIRL)
+        if (placed >= 0 && (qs.has('proj') || qs.has('replay'))) {   // demo targets / recorded players as a real AXIS model (ALIEN\GIRL)
           try { M.ccall('engine_load_entity_mesh', 'number', ['number', 'number', 'number'], [sp, shape.length, 5]); } catch (_) {}
         }
         M.ccall('engine_free', null, ['number'], [sp]); M.ccall('engine_free', null, ['number'], [bp]);
@@ -260,7 +260,7 @@
             const m = window.AXISMap.extractMap(bfd.buffer.slice(bfd.byteOffset, bfd.byteOffset + bfd.byteLength));
             const want = new Map();
             for (const o of m.objects) { const id = o.name.replace(/[\\/]/g, '_').toLowerCase(); const ti = byLower[id]; if (ti === undefined) continue; if (!want.has(ti)) want.set(ti, ('SHAPE\\' + stoc[ti].name).toUpperCase()); }
-            if (want.size || qs.has('proj')) {
+            if (want.size || qs.has('proj') || qs.has('replay')) {
               const exe = await fetchU8('/game/AXIS.EXE'); const ep = toWasm(M, exe);
               const imgs = [];
               for (let n = 0; n < 6; n++) { try { const img = await fetchU8('/game/Data/Image' + n + '.dat'); imgs.push({ u8: img, toc: window.AXISShape.readTOC(img.buffer.slice(img.byteOffset, img.byteOffset + img.byteLength)) }); } catch (_) {} }
@@ -270,7 +270,7 @@
                 const ptx = findPtx(texname);
                 if (ptx) { const pp = toWasm(M, ptx); const r = M.ccall('engine_map_set_texture', 'number', ['number', 'number', 'number', 'number', 'number'], [ti, ep, exe.length, pp, ptx.length]); M.ccall('engine_free', null, ['number'], [pp]); if (r >= 0) nt++; }
               }
-              if (qs.has('proj') && stoc[5]) {               // skin the target model (record 5) with its real SHAPE texture
+              if ((qs.has('proj') || qs.has('replay')) && stoc[5]) {   // skin the model (record 5) with its real SHAPE texture
                 const ptx = findPtx(('SHAPE\\' + stoc[5].name).toUpperCase());
                 if (ptx) { const pp = toWasm(M, ptx); M.ccall('engine_set_entity_texture', 'number', ['number', 'number', 'number', 'number'], [ep, exe.length, pp, ptx.length]); M.ccall('engine_free', null, ['number'], [pp]); }
               }

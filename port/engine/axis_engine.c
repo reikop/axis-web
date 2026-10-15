@@ -591,22 +591,41 @@ static void frame(void) {
             glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
         }
 
-        /* remote-player avatars: colored cubes at their world positions */
+        /* remote-player / recorded-player avatars at their world positions:
+           a real AXIS model when one is loaded (engine_load_entity_mesh), else cubes */
         if (avCount > 0) {
-            float s = gRadius * 0.03f; if (s < 1.0f) s = 1.0f;
-            glUniform1i(glGetUniformLocation(prog, "uHasTex"), 0);
-            glUniform3f(glGetUniformLocation(prog, "uColor"), 0.95f, 0.55f, 0.15f);
-            if (aUV >= 0) glDisableVertexAttribArray(aUV);
-            glBindBuffer(GL_ARRAY_BUFFER, vboCube);  glEnableVertexAttribArray(aPos); glVertexAttribPointer(aPos, 3, GL_FLOAT, GL_FALSE, 0, 0);
-            glBindBuffer(GL_ARRAY_BUFFER, vboCubeN); glEnableVertexAttribArray(aNrm); glVertexAttribPointer(aNrm, 3, GL_FLOAT, GL_FALSE, 0, 0);
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, iboCube);
             GLint uMVPloc = glGetUniformLocation(prog, "uMVP"), uModelloc = glGetUniformLocation(prog, "uModel");
-            for (int a = 0; a < avCount; a++) {
-                float model[16] = { s,0,0,0, 0,s,0,0, 0,0,s,0, avatars[a*3], avatars[a*3+1], avatars[a*3+2], 1 };
-                float mvpa[16]; mat_mul(mvpa, mvp, model);
-                glUniformMatrix4fv(uMVPloc, 1, GL_FALSE, mvpa);
-                glUniformMatrix4fv(uModelloc, 1, GL_FALSE, model);
-                glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
+            if (entTri > 0) {                              /* avatars as the real model */
+                float s = (gRadius * 0.12f) / entRadius;
+                glBindBuffer(GL_ARRAY_BUFFER, vboEnt);  glEnableVertexAttribArray(aPos); glVertexAttribPointer(aPos, 3, GL_FLOAT, GL_FALSE, 0, 0);
+                glBindBuffer(GL_ARRAY_BUFFER, vboEntN); glEnableVertexAttribArray(aNrm); glVertexAttribPointer(aNrm, 3, GL_FLOAT, GL_FALSE, 0, 0);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, iboEnt);
+                int tex = entHasTex && aUV >= 0;
+                if (tex) { glBindBuffer(GL_ARRAY_BUFFER, vboEntUV); glEnableVertexAttribArray(aUV); glVertexAttribPointer(aUV, 2, GL_FLOAT, GL_FALSE, 0, 0);
+                    glUniform1i(glGetUniformLocation(prog, "uHasTex"), 1); glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texEnt); glUniform1i(glGetUniformLocation(prog, "uTex"), 0); }
+                else { glUniform1i(glGetUniformLocation(prog, "uHasTex"), 0); glUniform3f(glGetUniformLocation(prog, "uColor"), 0.95f, 0.55f, 0.15f); if (aUV >= 0) glDisableVertexAttribArray(aUV); }
+                for (int a = 0; a < avCount; a++) {
+                    float model[16] = { s,0,0,0, 0,s,0,0, 0,0,s,0,
+                        avatars[a*3] - s*entCenter[0], avatars[a*3+1] - s*entCenter[1], avatars[a*3+2] - s*entCenter[2], 1 };
+                    float mvpa[16]; mat_mul(mvpa, mvp, model);
+                    glUniformMatrix4fv(uMVPloc, 1, GL_FALSE, mvpa); glUniformMatrix4fv(uModelloc, 1, GL_FALSE, model);
+                    glDrawElements(GL_TRIANGLES, entTri * 3, GL_UNSIGNED_INT, 0);
+                }
+                if (tex) { glUniform1i(glGetUniformLocation(prog, "uHasTex"), 0); glDisableVertexAttribArray(aUV); }
+            } else {                                       /* avatars as colored cubes */
+                float s = gRadius * 0.03f; if (s < 1.0f) s = 1.0f;
+                glUniform1i(glGetUniformLocation(prog, "uHasTex"), 0);
+                glUniform3f(glGetUniformLocation(prog, "uColor"), 0.95f, 0.55f, 0.15f);
+                if (aUV >= 0) glDisableVertexAttribArray(aUV);
+                glBindBuffer(GL_ARRAY_BUFFER, vboCube);  glEnableVertexAttribArray(aPos); glVertexAttribPointer(aPos, 3, GL_FLOAT, GL_FALSE, 0, 0);
+                glBindBuffer(GL_ARRAY_BUFFER, vboCubeN); glEnableVertexAttribArray(aNrm); glVertexAttribPointer(aNrm, 3, GL_FLOAT, GL_FALSE, 0, 0);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, iboCube);
+                for (int a = 0; a < avCount; a++) {
+                    float model[16] = { s,0,0,0, 0,s,0,0, 0,0,s,0, avatars[a*3], avatars[a*3+1], avatars[a*3+2], 1 };
+                    float mvpa[16]; mat_mul(mvpa, mvp, model);
+                    glUniformMatrix4fv(uMVPloc, 1, GL_FALSE, mvpa); glUniformMatrix4fv(uModelloc, 1, GL_FALSE, model);
+                    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
+                }
             }
         }
 
