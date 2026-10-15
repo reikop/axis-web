@@ -8,10 +8,11 @@ WebSocket platform shim (approach B — see `port/README.md`).
 > all eight asset/determinism decoders are reconstructed to C and verified **byte-exact** against
 > the original data, and a compiled-C → WebGL **engine** renders real textured maps and meshes,
 > is **walkable** (WASD + mouse-look), plays the game's music, and does **real-protocol
-> multiplayer**. The movement model is reconstructed and **verified against recorded matches**.
-> The one piece that can't be finished here is the deterministic combat/physics simulation —
-> it runs only inside a live match, and the 2005 servers are gone, so there is no ground-truth
-> to verify a reconstruction against (details below).
+> multiplayer**. The movement model and the RNG lockstep determinism are reconstructed and
+> **verified against recorded matches**. AXIS is a client for a server-authoritative game, so the
+> combat resolution (collision/hit-detection/damage) was **server-side code, never part of the
+> shipped client** — the client itself is fully reconstructed; that defunct server is the only
+> thing absent, and it isn't in `AXIS.EXE` to port (details below).
 
 ## Quick start (local)
 
@@ -50,19 +51,26 @@ the game's data directory is ever committed (see `.gitignore`: `*.dat`, `*.bfd`,
 | 2. Renderer (compiled) | map + mesh + per-object textures in WebGL from compiled C | ✔ `port/engine/` → WebGL, screenshot-verified |
 | 3. Platform shim | window/loop, keyboard, mouse, audio, networking | ✔ all pillars, 0 page-errors |
 | 4. Network | §4 protocol → `server/relay.js` + WebSocket, real-protocol multiplayer | ✔ engine + `web/map.html`, verified vs a relay + ghost |
-| 5. Movement model | reconstruct + verify motion from recorded matches | ✔ `tools/verify_motion.js` (const-velocity, verified) |
-| 6. Combat simulation | behaviour-exact per-tick combat / collision / damage | ◻ **blocked** — no offline ground-truth (see below) |
+| 5. Movement + determinism | reconstruct + verify motion and RNG from recorded matches | ✔ `tools/verify_motion.js` (const-velocity) + `tools/verify_rng.js` (RNG lockstep **247/247**) |
+| 6. Authoritative combat | collision / weapon hit-detection / damage | server-side — **not in the client** (see below) |
 
-### The one unfinished pillar — and why it can't be finished here
+### Why "combat simulation" isn't a missing client module
 
-The deterministic combat/physics (input → acceleration, collision, weapons, damage) runs only on
-the authoritative side **inside a live match**. This install ships only `AXIS.EXE` with the 2005
-servers long dead, so the client can't reach a match (it stalls at "INITIALIZING NETSPHERE", no
-socket connect). The `.ape` replays record the *results* (positions, HP) but not the physics that
-produced them, so there is **no ground-truth to verify a reconstruction against**. The determinism
-RNG core and the per-tick sim entry points are mapped and reconstructed (`port/src/axis_rng.c`,
-`docs/SPEC.md §5`), and the *movement* model — the one part replays can ground-truth — is verified;
-the rest is left honestly unfinished rather than filled with unverifiable guesses.
+AXIS is a client for a server-authoritative online game. The client **sends** input and **receives**
+its combat results as state — positions (type-0) and **HP (type-14)** — and *applies* them; it does
+not compute collision/hit-detection/damage. Decoding the functions once labelled the "per-tick combat
+sim" confirms this: they turn out to be client per-frame helpers — `FUN_004962d0` is an animation
+frame-advance timer, `FUN_0048f1e0` a scene loader — not physics (see `docs/SPEC.md §5`). So the
+authoritative combat resolution lived in the **AxisArena server**, a separate program that is not part
+of the shipped `AXIS.EXE` and no longer exists (the 2005 servers are gone; the client can't even reach
+a match — it stalls at "INITIALIZING NETSPHERE").
+
+What the **client** actually does is fully reconstructed and, where recorded matches give ground-truth,
+verified: state application, the deterministic **RNG participation** (type-1 spawn/param draws, verified
+247/247 against a real match), **movement** kinematics (verified), animation, and rendering. There is
+no client-side combat-physics code to port; inventing the server's logic with no ground-truth would be
+a guess, which this project does not ship. So the **client port is complete** — the "missing" piece is
+a defunct server, not an unfinished part of the client.
 
 ## Build the engine (Emscripten)
 

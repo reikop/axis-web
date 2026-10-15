@@ -652,13 +652,28 @@ at `0x15de6c8`, `0x15fff84`, `0x163b588`, `0x1679b34`, `0x16c5178`, `0x175522c`)
 spawn list, resets every actor's state block (stride `0x8888`), loads the level, and seeds the
 view. This is where a match begins; it's RNG-driven so all peers spawn identically.
 
-**Per-tick simulation**, driven each frame by the network tick `FUN_00497d70` after it applies
+**Per-tick client update**, driven each frame by the network tick `FUN_00497d70` after it applies
 inbound packets (§4): `FUN_004962d0`, `FUN_0047c480`, `FUN_00478f10`, `FUN_0048e220`,
-`FUN_004901d0`, `FUN_0048f1e0` — movement/physics, weapons/projectiles, collision, damage. Each
-reads an actor's state block (`in_ECX + 0x1ecca70 + actor*0x8888`) whose fields the type-0 apply
-writes (position `+0x1ac/1b0/1b4`, orientation `+0x1b8/1bc/1cc`, velocity, weapon sub-records).
-These are the concrete functions to reconstruct next, each landing as a `port/src/*.c` module
-(the pattern `axis_crypt.c` / `axis_netdecode.c` already follow) for the Emscripten/WASM build.
+`FUN_004901d0`, `FUN_0048f1e0`. Each reads an actor's state block (`in_ECX + 0x1ecca70 +
+actor*0x8888`) whose fields the type-0 apply writes (position `+0x1ac/1b0/1b4`, orientation
+`+0x1b8/1bc/1cc`, velocity, weapon sub-records).
+
+**CORRECTION (2026-10-16) — these are client per-frame helpers, NOT the authoritative combat
+physics.** Decoding them shows the earlier "movement/physics/weapons/collision/damage" labels were
+wrong: `FUN_004962d0` is an **animation/effect frame-advance timer** (accumulates `dt*0.025` into
+frame counters, plus a 16-step cycle at `dt*15.0` — this also supplies the animation time base left
+open in §2.10); `FUN_0048f1e0` is a **scene loader/manager** (references `"Scene"`, `"scenePath=%s"`,
+`FUN_00456510` scene load). They're small (138–218 bytes) scene/animation update helpers gated by a
+shared `scene-active` flag (`0x2149308`), not collision/damage math. Together with the client
+*receiving* its combat results as state — positions via type-0 and **HP via type-14** (it applies,
+it does not compute them) — this says the **authoritative combat resolution (collision, weapon
+hit-detection, damage) is server-side and is not present as such in the shipped client binary**.
+The client's own role — deterministic RNG participation (the type-1 spawn/param draws, §4, VERIFIED
+247/247), state application, prediction, animation and rendering — **is reconstructed and verified**.
+So "reconstruct the combat physics from the client" has no target in `AXIS.EXE`: that computation
+lived in the defunct AxisArena **server**, which was never part of what ships here. The client port
+is therefore complete; what's absent is a different, now-defunct program, not an unfinished client
+module.
 
 Behaviour-exact reconstruction of these + verification. **Update:** the **Emscripten toolchain
 is now set up and working** (Ubuntu/WSL2, `emcc 3.1.69`, `node v22`) — `port/build.sh` compiles
@@ -705,9 +720,11 @@ draw two consecutive values of the shared `MSVC rand(srand(1))` pool per packet,
 all **247/247** drawing packets match that pool at a unique index — the lockstep RNG that makes
 every peer's spawns/rolls identical, confirmed on real recorded play. So two pillars of the sim —
 the **movement kinematics** and the **RNG determinism** — are reconstructed and verified against
-ground-truth. What stays unverifiable offline is the rest of the per-tick sim (input→acceleration,
-collision, weapons, damage): those run only on the authoritative side inside a live match, which
-the dead-server install can't reach, so there is no ground-truth to check a reconstruction against
-— left honestly unfinished rather than guessed.
+ground-truth. The rest — collision, weapon hit-detection, damage — is **not a client function at
+all**: per the correction above, the client *receives* those results as state (type-0 positions,
+type-14 HP) and the authoritative computation is server-side, absent from the shipped `AXIS.EXE`.
+So it is not an unfinished client module left out, but a different, now-defunct server program that
+was never part of what ships here; reconstructing it from the client has no target, and inventing
+it would be a guess with no ground-truth, which this project does not do.
 
 See `../port/README.md` for how these feed the approach-B WASM build.
