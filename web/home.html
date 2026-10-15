@@ -78,18 +78,21 @@
       <div class="fmt"><span class="dot"></span><div><b>Meshes (.shp)</b><small>1742/1743 verified</small></div></div>
       <div class="fmt"><span class="dot"></span><div><b>Map layout (.bfd)</b><small>object placement</small></div></div>
       <div class="fmt"><span class="dot"></span><div><b>Heightmap terrain</b><small>vertex/normal/UV</small></div></div>
+      <div class="fmt"><span class="dot"></span><div><b>Net protocol + relay</b><small>64-byte packets · shared-map MP</small></div></div>
       <div class="fmt"><span class="dot wip"></span><div><b>Mesh ↔ texture</b><small>needs runtime capture</small></div></div>
-      <div class="fmt"><span class="dot wip"></span><div><b>Animation / net / WASM</b><small>runtime — next phase</small></div></div>
+      <div class="fmt"><span class="dot wip"></span><div><b>Animation / game logic / WASM</b><small>runtime — next phase</small></div></div>
     </div>
   </section>
 
   <section>
     <div class="note"><b>Where this is.</b> The reverse-engineering and asset pipeline are
-      complete: the game's maps, models and textures all render above from your own install.
-      What remains is the interactive runtime — texturing meshes (needs dynamic capture),
-      skeletal animation, combat/item logic, the network protocol &amp; server, and the
-      Emscripten/WASM build — which is a long, separate effort. Full notes live in
-      <code>docs/SPEC.md</code>.</div>
+      complete — maps, models and textures all render above from your own install — and the
+      multiplayer transport works: run <code>node server/relay.js</code>, open the Map Viewer
+      in two browsers, hit <b>Connect</b>, and you walk a shared map and see each other's
+      avatars (the game's real 64-byte packet protocol over WebSocket). What remains is the
+      rest of the interactive runtime — texturing meshes (needs dynamic capture), skeletal
+      animation, full combat/item logic, and the Emscripten/WASM client build. Full notes
+      live in <code>docs/SPEC.md</code>.</div>
   </section>
 
   <footer>
