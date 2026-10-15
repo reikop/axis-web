@@ -366,6 +366,15 @@ gallery (§2.2) shows the textures standalone.
    id `DAT_009fee24`; counters `DAT_00b12b70[ch]`, wrapped `& 0x7f`) indexes a resend ring
    buffer at `DAT_00af0b70` (0x80 slots × 0x40 bytes per channel). Next: the 9-byte header
    fields, the socket send (`FUN_00450700`), and the recv/dispatch (packet-type → handler).
+
+   **Six send sites** call `pnSendPacketData` (`0x48d080, 0x48d580, 0x48d750, 0x48db10,
+   0x48de20, 0x48df60`) — the outbound message types. The player-action packet
+   (`FUN_0048d080`) fills a 64-byte struct: `[+1]=1`, `[+2]=actor id`, team/colour bytes,
+   `[+0x09]` position (2×f32), orientation shorts, per-slot fire/action bitmasks
+   (`local_27`/`local_23`), plus RNG-table "checksum" words (anti-cheat). **Key link:** the
+   same 64-byte payload is also written to the `AutoPlay\*.ape` file via the encrypted write
+   `FUN_0046c0b0` — so **`.ape` replays are recorded packet streams** (decryptable with
+   §2.3), giving real protocol samples without a live server.
 5. (optional) full PTX block decoder for a standalone PNG extractor — done (`tools/ptx_decode.py`).
 
 See `../port/README.md` for how these feed the approach-B WASM build.
