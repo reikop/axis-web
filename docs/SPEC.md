@@ -255,13 +255,29 @@ fully consumed), then feed the vertex/normal/UV/index buffers to a WebGL viewer.
 | `0x46c060` | fread wrapper (used by `.bfd` parsers) |
 | `0x466e40` | vector/cross-product helper (terrain normals) |
 | `0x456070` | texture load-by-name |
+| `0x49df7e` | fseek wrapper |
+| `0x466200` | shape: fseek Shape.dat to an entry's mesh blob |
+| `0x466260` | shape BST cache / loader (`getShapePtrByName`) |
+| `0x464090` | **shape mesh file parser** (vertices/faces — next target) |
 | `0x46bb90` | fatal error/log formatter |
+
+### 2.7 Shape loading chain (toward real mesh geometry)
+
+- `FUN_004660a0` loads the `Shape.dat` TOC; `FUN_0049df7e` = **fseek** (`fseek(f, off, origin)`).
+- `FUN_00466200` = `getItemFile(name)`: looks up the index (`FUN_00466180`), `fseek`s
+  `Shape.dat` to `TOC[idx].offset` (record+0x40), returns the positioned handle.
+- `FUN_00466260` = `getShapePtrByName`: a **BST cache** of loaded shapes (node = 0x4c/76
+  bytes: name[0x40], toc_index@0x40, left@0x44, right@0x48). On a miss it picks the format
+  by `this+0x110` (0/1/2 → extension at `PTR_DAT_004c5cfc` / `DAT_004c5d00`; else "invalid
+  file format") and calls the mesh parser.
+- **`FUN_00464090(filename, offset, size)` = the actual mesh file parser** (vertices / faces
+  / UVs) — the next decompile target for real geometry; `FUN_004655c0` handles format type 2.
 
 ## 4. Next analysis targets
 
-1. `.bfd` exact byte layout — read the `FUN_0046c060` (fread) arg sizes in `FUN_0048ae40`'s
-   assembly to pin each header + per-patch field width, then write a terrain parser + viewer.
-2. Shape record body @ its data blob — vertices / UVs / skeleton binding (renderer).
+1. **`FUN_00464090`** — Shape mesh binary (vertices/faces/UVs/bones) → mesh extractor →
+   glTF → upgrade `web/map.html` to render real models instead of placeholder boxes.
+2. `.bfd` heightmap-patch byte layout (§2.5) for terrain maps that use it.
 3. `WinMain` / entry + main loop; GL draw style (immediate `glBegin` vs. vertex arrays).
 4. `WS2_32` send/recv call sites — multiplayer protocol → server reimplementation.
 5. (optional) full PTX block decoder for a standalone PNG extractor.
