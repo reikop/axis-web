@@ -36,6 +36,19 @@ static GLuint vboCube, vboCubeN, iboCube;
 static float avatars[MAXAV * 3];
 static int avCount = 0;
 
+/* reconstructed simulation (port/sim/) wired into the engine: run the verified
+ * projectile combat sim each frame and render the live projectiles. */
+typedef struct { float pos[3], vel[3]; int owner, target; float age, lifetime, speed, turnRate; } axis_proj_t;
+int axis_sim_tick(axis_proj_t *projs, int *palive, int nProj,
+                  const float *actors, const int *aalive, int nActors,
+                  float *forces, float radius, float mag, float maxRange, float dt);
+#define MAXPROJ 32
+#define MAXTGT 8
+static axis_proj_t gProjs[MAXPROJ];
+static int gProjAlive[MAXPROJ], gProjN = 0;
+static float gTgt[MAXTGT*3], gTgtForce[MAXTGT*3];
+static int gTgtAlive[MAXTGT], gTgtN = 0, projDemo = 0;
+
 /* map mode: per-object triangle ranges + each object's shape, so every placed
  * object can be drawn with its own SHAPE\<name> skin (texForShape, keyed by the
  * Shape.dat record index) where one exists, flat otherwise. */
@@ -185,6 +198,29 @@ EMSCRIPTEN_KEEPALIVE void engine_set_avatars(const float *xyz, int n) {
     if (n > MAXAV) n = MAXAV; if (n < 0) n = 0;
     for (int i = 0; i < n * 3; i++) avatars[i] = xyz[i];
     avCount = n;
+}
+
+/* Demo: run the reconstructed projectile combat sim in the engine — place a ring
+ * of targets around the loaded map's centre and fire homing projectiles at them
+ * from above. The sim (axis_sim_tick) advances them each frame; the engine draws
+ * the live projectiles and targets. Proves the verified sim runs in the port. */
+EMSCRIPTEN_KEEPALIVE void engine_proj_demo(void) {
+    float R = gRadius * 0.55f, spd = gRadius * 0.9f;
+    gTgtN = MAXTGT; gProjN = MAXTGT;
+    for (int i = 0; i < MAXTGT; i++) {
+        float a = 6.2831853f * (float)i / MAXTGT;
+        gTgt[i*3+0] = gCenter[0] + cosf(a) * R;
+        gTgt[i*3+1] = gCenter[1];
+        gTgt[i*3+2] = gCenter[2] + sinf(a) * R;
+        gTgtAlive[i] = 1; gTgtForce[i*3]=gTgtForce[i*3+1]=gTgtForce[i*3+2]=0;
+        /* a projectile launched from above the centre, aimed outward, homing on target i */
+        gProjs[i].pos[0] = gCenter[0]; gProjs[i].pos[1] = gCenter[1] + R; gProjs[i].pos[2] = gCenter[2];
+        gProjs[i].vel[0] = cosf(a)*spd; gProjs[i].vel[1] = 0; gProjs[i].vel[2] = sinf(a)*spd;
+        gProjs[i].owner = -1; gProjs[i].target = i;
+        gProjs[i].age = 0; gProjs[i].lifetime = 30.0f; gProjs[i].speed = spd; gProjs[i].turnRate = 2.5f;
+        gProjAlive[i] = 1;
+    }
+    projDemo = 1;
 }
 
 static inline float rf32e(const uint8_t *p) { float v; __builtin_memcpy(&v, p, 4); return v; }
@@ -378,6 +414,38 @@ static void frame(void) {
                 float mvpa[16]; mat_mul(mvpa, mvp, model);
                 glUniformMatrix4fv(uMVPloc, 1, GL_FALSE, mvpa);
                 glUniformMatrix4fv(uModelloc, 1, GL_FALSE, model);
+                glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
+            }
+        }
+
+        /* reconstructed projectile sim running in the engine (?proj) */
+        if (projDemo) {
+            float sdt = dt > 0.05f ? 0.05f : dt;      /* clamp hitches so homing can't overshoot */
+            axis_sim_tick(gProjs, gProjAlive, gProjN, gTgt, gTgtAlive, gTgtN, gTgtForce,
+                          gRadius * 0.06f, 1.0f, 0.0f, sdt);
+            int anyLive = 0; for (int i = 0; i < gProjN; i++) if (gProjAlive[i]) anyLive = 1;
+            if (!anyLive) engine_proj_demo();                /* loop the demo */
+            if (aUV >= 0) glDisableVertexAttribArray(aUV);
+            glBindBuffer(GL_ARRAY_BUFFER, vboCube);  glEnableVertexAttribArray(aPos); glVertexAttribPointer(aPos, 3, GL_FLOAT, GL_FALSE, 0, 0);
+            glBindBuffer(GL_ARRAY_BUFFER, vboCubeN); glEnableVertexAttribArray(aNrm); glVertexAttribPointer(aNrm, 3, GL_FLOAT, GL_FALSE, 0, 0);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, iboCube);
+            GLint uM = glGetUniformLocation(prog, "uMVP"), uMo = glGetUniformLocation(prog, "uModel");
+            glUniform1i(glGetUniformLocation(prog, "uHasTex"), 0);
+            float st = gRadius * 0.05f, sp = gRadius * 0.025f;
+            for (int i = 0; i < gTgtN; i++) {                /* targets: red cubes */
+                glUniform3f(glGetUniformLocation(prog, "uColor"), 0.9f, 0.2f, 0.2f);
+                float m[16] = { st,0,0,0, 0,st,0,0, 0,0,st,0, gTgt[i*3], gTgt[i*3+1], gTgt[i*3+2], 1 };
+                float mv[16]; mat_mul(mv, mvp, m);
+                glUniformMatrix4fv(uM, 1, GL_FALSE, mv); glUniformMatrix4fv(uMo, 1, GL_FALSE, m);
+                glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
+            }
+            for (int i = 0; i < gProjN; i++) {               /* live projectiles: yellow cubes */
+                if (!gProjAlive[i]) continue;
+                glUniform3f(glGetUniformLocation(prog, "uColor"), 0.95f, 0.9f, 0.2f);
+                float *p = gProjs[i].pos;
+                float m[16] = { sp,0,0,0, 0,sp,0,0, 0,0,sp,0, p[0], p[1], p[2], 1 };
+                float mv[16]; mat_mul(mv, mvp, m);
+                glUniformMatrix4fv(uM, 1, GL_FALSE, mv); glUniformMatrix4fv(uMo, 1, GL_FALSE, m);
                 glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
             }
         }

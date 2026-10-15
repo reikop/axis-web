@@ -19,10 +19,11 @@ if ! command -v emcc >/dev/null 2>&1; then
 fi
 
 emcc engine/axis_engine.c src/axis_shp.c src/axis_ptx.c \
-  -O2 -ffp-contract=off \
+  sim/axis_vecmath.c sim/axis_proj.c sim/axis_target.c sim/axis_collide.c sim/axis_tick.c \
+  -O2 -ffp-contract=off -Isim \
   -s FULL_ES2=1 -s MIN_WEBGL_VERSION=1 -s MAX_WEBGL_VERSION=1 \
   -s MODULARIZE=1 -s EXPORT_NAME=AxisEngine \
-  -s EXPORTED_FUNCTIONS='["_main","_engine_alloc","_engine_free","_engine_load_mesh","_engine_load_map","_engine_set_texture","_engine_set_avatars","_engine_map_set_texture"]' \
+  -s EXPORTED_FUNCTIONS='["_main","_engine_alloc","_engine_free","_engine_load_mesh","_engine_load_map","_engine_set_texture","_engine_set_avatars","_engine_map_set_texture","_engine_proj_demo"]' \
   -s EXPORTED_RUNTIME_METHODS='["ccall","HEAPU8"]' \
   -s INITIAL_MEMORY=134217728 -s ALLOW_MEMORY_GROWTH=1 \
   -s ENVIRONMENT=web \
