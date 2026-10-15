@@ -338,9 +338,24 @@ names — because they are stale remnants partly clobbered by the runtime pointe
 share the 0x80 group struct. No `texname → Image*.dat` formula matches (0 of 1899 tried). So
 the full per-group texture name is **reconstructed at run time** from context and cannot be
 recovered cleanly from the static `.shp` alone. Correctly texturing the meshes therefore
-needs **dynamic capture** — e.g. Frida-hook the texture-by-name loader `FUN_00456070`
-(`0x456070`) on the running game to record each resolved `(name, glTextureId)` and tie it to
-the group — which first requires launching AXIS (its own effort, as it is an online title).
+needs **dynamic capture** — Frida-hook the texture-by-name loader `FUN_00456070` (`0x456070`)
+on the running game to record each resolved `(name, glTextureId)` and tie it to the group.
+
+**Dynamic-capture attempt (done, blocker precisely characterized).** AXIS was launched under
+Frida on this host and the method is validated: the image loads at its preferred base
+`0x400000` (no ASLR, so static addresses are runtime addresses), and `FUN_00456070` hooks
+cleanly — confirmed to be *texture-lookup-by-name* (`param_1` = the texture-name C string; it
+searches the six Image pages and errors `"can't find texture object '%s'"`). But **zero** calls
+were observed through startup and the menu, because the client never loads a 3D scene: it stops
+at a modal — *"게임서버를 선택하지 않았습니다. AxisPlay.exe를 실행후 게임서버를 먼저 선택해
+주십시오"* ("no game server selected; run AxisPlay.exe and select a server first"). The scene
+(map + models + textures, where `FUN_00456070` fires) only loads after that gate, and **this
+install ships only `AXIS.EXE`** — no `AxisPlay.exe` launcher and no server config — while the
+2005 servers are long dead. So the texture-binding capture needs the game first driven past the
+server-select gate into a scene: either the replay-playback path (the `.ape` attract/demo loads
+a map with no live server) or Frida-patching the gate check and stubbing the net connect so a
+map loads offline. That is a real, bounded next step, not a static one.
+
 Until then the mesh/map viewers render untextured flat-shaded geometry and the texture
 gallery (§2.2) shows the textures standalone.
 
