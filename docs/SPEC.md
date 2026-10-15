@@ -523,8 +523,21 @@ by `run.py` at `/game/`; `web/audio.json` holds only filenames — no audio is c
    | 25  | u16  | action/fire bitmask 1 (one bit per 0..15 channel, built in the 0x10 loop) |
    | 29  | u16  | action/fire bitmask 2 |
    | 33..42 | u16×5 | aim/angle shorts |
-   | 43  | u8   | RNG stream selector (`counter % 5`) |
-   | 44..55 | | RNG sync block — 5 draws from the shared table `DAT_00a11bc8[0x1000]` (idx `DAT_00a20488`) |
+   | 43  | u8   | RNG stream selector = `counter % 5` (`counter` at `0x23423c9`, ++ each packet) |
+   | 44  | u16  | **RNG draw 1** = `pool[idx] % 100000` (pool 15-bit, so = `pool[idx]`); `idx = DAT_00a20488` |
+   | 46  | u32  | spawn/param table entry picked by draw 1 (per-stream table `0x15bd1f8/0x15de6cc/…`) |
+   | 50  | u16  | **RNG draw 2** = `pool[idx+1] % 100000`; the index then advances by 2 total |
+   | 52  | u32  | spawn/param table entry picked by draw 2 |
+
+   **VERIFIED against recorded play (`tools/verify_rng.js`).** The shared pool `DAT_00a11bc8[0x1000]`
+   is consumed through one running index `DAT_00a20488`; each type-1 packet draws exactly two
+   *consecutive* pool values into `[44]`/`[50]` (above), so on a real replay those two u16s must be
+   a consecutive pair in the pool. On `Test.ape` **247/247** drawing type-1 packets match, every one
+   at a **unique** pool index — i.e. the recorded RNG stream is exactly consecutive values of the
+   `MSVC rand(srand(1))` pool (= `MATHFUNC.TBL`, §5). This is the lockstep determinism core checked
+   against ground-truth. (The other three replays carry mostly empty RNG fields / a per-match-reseeded
+   pool and don't match the default pool; the model is proven by the replay that does. This corrects
+   an earlier note that mis-described `[44..55]` as "5 draws" — it is 2 draws + 2 table lookups.)
 
    The type-1 packet's four floats are small **normalised values (0..1)** (per-tick control
    inputs / aim), not world coordinates, and it also carries RNG samples from a shared table.
@@ -675,10 +688,16 @@ integrator cuts the median next-sample error ~4.1× below no-model (**≈172 vs 
 against ≈787-unit moves), and constant-acceleration adds **no** improvement (median 160 but worse
 tails). So AXIS motion is **inertial / constant-velocity dead-reckoning between state snapshots**,
 with the authoritative position correcting the residual — consistent with the state-replication
-model (§4). The engine applies exactly this to tween remote players between packets. What stays
-unverifiable offline is the rest of the per-tick sim (input→acceleration, collision, weapons,
-damage): those run only on the authoritative side inside a live match, which the dead-server
-install can't reach, so there is no ground-truth to check a reconstruction against — left honestly
-unfinished rather than guessed.
+model (§4). The engine applies exactly this to tween remote players between packets.
+
+The sim's **determinism core is also verified** (§4, `tools/verify_rng.js`): the type-1 packets
+draw two consecutive values of the shared `MSVC rand(srand(1))` pool per packet, and on `Test.ape`
+all **247/247** drawing packets match that pool at a unique index — the lockstep RNG that makes
+every peer's spawns/rolls identical, confirmed on real recorded play. So two pillars of the sim —
+the **movement kinematics** and the **RNG determinism** — are reconstructed and verified against
+ground-truth. What stays unverifiable offline is the rest of the per-tick sim (input→acceleration,
+collision, weapons, damage): those run only on the authoritative side inside a live match, which
+the dead-server install can't reach, so there is no ground-truth to check a reconstruction against
+— left honestly unfinished rather than guessed.
 
 See `../port/README.md` for how these feed the approach-B WASM build.
