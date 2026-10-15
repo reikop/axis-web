@@ -478,6 +478,20 @@ without guessing, the same bar as §2.9 texturing): the 1650/3300 time base, the
 per-key record stride, the rotation/translation track interleave, and clip boundaries.
 No guessed playback is shipped until these are verified.
 
+**Dynamic trace attempted and found blocked (2026-10-16).** The static layout can't be pinned
+from the file, so the keyframe stride needs a runtime trace of the sampler. Tried it: launched
+`AXIS.EXE` with the server-select gate bypassed (registry, §2.9), Frida-attached (base `0x400000`,
+no ASLR). Over 5 s the frame loop runs hard — `opengl32!wglSwapBuffers` fires **~480×/s** (frames
+480→958→1438→1918), so the process is alive and rendering — but the per-tick animation timer
+`FUN_004962d0` and the model/animation update `FUN_00487380` execute **0 times**, as does the
+network tick `FUN_00497d70`. Offline the client only ever renders the lobby / server-select screen;
+it never advances to a scene that runs the per-tick animation (or simulation) path, because that
+needs a live match and the 2005 servers are gone. So the animation sampler **cannot** be
+dynamically traced here, and the same runtime wall blocks the per-tick sim / input→acceleration
+path. This is a measured boundary (the code path provably never runs offline), not an untried
+assumption — and even once traced, the sampler's x87 `float10` math (like §5) could only be
+reproduced web-consistently, not bit-exactly, in WASM.
+
 The mesh's per-vertex `attr` (4 bytes, §2.8) is the likely bone-index/weight for skinning;
 with verified keyframe playback + that skin binding the meshes can be deformed and animated.
 
