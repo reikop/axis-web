@@ -48,6 +48,30 @@ int axis_seg_tri(const float *p0, const float *p1, const float *a, const float *
     return 1;
 }
 
+/* Segment p0->p1 vs a sphere (centre, radius) — the projectile-vs-actor hit test
+ * (actors are approximated by a bounding sphere). Returns 1 on overlap, with the
+ * entry parametric distance t in [0,1] (clamped to 0 if the start is inside). */
+EXPORT
+int axis_seg_sphere(const float *p0, const float *p1, const float *centre, float radius, float *outT) {
+    float d[3] = { p1[0]-p0[0], p1[1]-p0[1], p1[2]-p0[2] };
+    float m[3] = { p0[0]-centre[0], p0[1]-centre[1], p0[2]-centre[2] };
+    float aa = d[0]*d[0]+d[1]*d[1]+d[2]*d[2];
+    if (aa < 1e-12f) {                                 /* degenerate segment: point-in-sphere */
+        float mm = m[0]*m[0]+m[1]*m[1]+m[2]*m[2];
+        if (mm <= radius*radius) { *outT = 0.0f; return 1; }
+        return 0;
+    }
+    float bb = 2.0f*(m[0]*d[0]+m[1]*d[1]+m[2]*d[2]);
+    float cc = (m[0]*m[0]+m[1]*m[1]+m[2]*m[2]) - radius*radius;
+    if (cc <= 0.0f) { *outT = 0.0f; return 1; }        /* start already inside */
+    float disc = bb*bb - 4.0f*aa*cc;
+    if (disc < 0.0f) return 0;
+    float t = (-bb - sqrtf(disc)) / (2.0f*aa);          /* nearest entry */
+    if (t < 0.0f || t > 1.0f) return 0;
+    *outT = t;
+    return 1;
+}
+
 /* Impact knockback: force imparted along `dir` (unit) scaled by `mag`, with the
  * engine's ×10 world scale and the sign the decompile uses (into -dir). */
 EXPORT

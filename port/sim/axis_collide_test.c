@@ -5,6 +5,7 @@
 #include <stdio.h>
 
 int  axis_seg_tri(const float*,const float*,const float*,const float*,const float*,float*,float*);
+int  axis_seg_sphere(const float*,const float*,const float*,float,float*);
 void axis_impact_force(const float *dir, float mag, float *outForce);
 
 static int fails=0; static void ck(const char*w,int c){if(!c){printf("  FAIL %s\n",w);fails++;}}
@@ -29,6 +30,18 @@ int main(void){
     /* segment parallel to the triangle plane -> no hit */
     ck("parallel segment -> no hit",
        axis_seg_tri((float[]){0,0,1}, (float[]){2,0,1}, a,b,c,&t,h) == 0);
+
+    /* segment vs sphere (projectile-vs-actor hit): sphere radius 1 at (10,0,0) */
+    float sc[3]={10,0,0};
+    ck("segment reaching the sphere hits",
+       axis_seg_sphere((float[]){0,0,0},(float[]){20,0,0}, sc,1.0f,&t)==1);
+    ck("entry t ~ 9/20", nf(t,9.0f/20.0f));
+    ck("segment passing beside the sphere misses",
+       axis_seg_sphere((float[]){0,5,0},(float[]){20,5,0}, sc,1.0f,&t)==0);
+    ck("segment stopping short of the sphere misses",
+       axis_seg_sphere((float[]){0,0,0},(float[]){5,0,0}, sc,1.0f,&t)==0);
+    ck("start inside sphere -> t=0 hit",
+       axis_seg_sphere((float[]){10,0,0},(float[]){20,0,0}, sc,1.0f,&t)==1 && nf(t,0.0f));
 
     /* impact force: opposite the hit direction, scaled by mag*10 */
     float f[3]; axis_impact_force((float[]){1,0,0}, 2.0f, f);
