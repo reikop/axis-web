@@ -51,13 +51,14 @@
     <h1>AXIS <span>Web Reconstruction</span></h1>
     <p class="lede">A browser rebuild of the 2005 OpenGL action game <b>AXIS</b>, decoded
       directly from a legally-owned copy. Every file format — archives, maps, 3D meshes and
-      textures — has been reverse-engineered and renders here from your own game data.</p>
+      textures — has been reverse-engineered, and the reconstructed engine is <b>playable</b>:
+      walk a real arena and fight, all from your own game data. Start with <b>▶ Play</b>.</p>
   </header>
 
   <div class="tools">
-    <a class="tool" href="engine/index.html?map=CUBE"><div class="t">WASM Engine (WebGL) <span class="ar">→</span></div>
-      <div class="d">The reconstructed engine compiled C→WebAssembly: it opens a WebGL context and renders a real map, meshes decoded by the same byte-exact code. Walk it with WASD.</div>
-      <div class="m">approach-B · compiled C · needs run.py + build_engine.sh</div></a>
+    <a class="tool" href="engine/index.html"><div class="t">▶ Play (WASM Engine) <span class="ar">→</span></div>
+      <div class="d">The playable port: pick a map and play. Walk a real arena (WASD, wall collision, mouse-look), press F to fire — projectiles home, collide with the level and burst debris, destructible targets and a score, pickups, music and real sound effects. All seven reconstructed per-tick simulation layers run live in compiled C→WebAssembly, and you can watch a recorded 2005 match replayed in 3D. Real-protocol multiplayer with <code>&mp</code>.</div>
+      <div class="m">approach-B · compiled C → WASM/WebGL · needs run.py + build_engine.sh</div></a>
     <a class="tool" href="map.html"><div class="t">3D Map Viewer <span class="ar">→</span></div>
       <div class="d">Walk through the real game maps, built from their actual Shape.dat meshes.</div>
       <div class="m">40 maps · WASD to move</div></a>
