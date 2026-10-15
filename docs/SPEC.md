@@ -376,8 +376,15 @@ gallery (§2.2) shows the textures standalone.
    `FUN_0046c0b0` — so **`.ape` replays are recorded packet streams** (decryptable with
    §2.3), giving real protocol samples without a live server. **Validated:**
    `Autoplay001.ape` (539 KB) decrypts whole (version `0x1201`) and contains the per-tick
-   64-byte player records (tick / actor id / payload with position). Decoding a full `.ape`
-   is the practical way to recover the packet semantics for the server reimplementation.
+   64-byte player records. **Record format (verified):** after a ~60-byte header the file is
+   a stream of **76-byte records** `[u32 seq][u32 ?][u32 0x40][64-byte payload]` (12+64), the
+   same packets the game sends. Parsing `Autoplay001.ape` yields ~7,000 records and **three
+   real players** (actors 0,1,2). Tool: `tools/parse_ape.py`. **Still ambiguous:** the
+   per-opcode payload layout — `payload[0]` is an opcode (0xFF dominates = idle/keepalive
+   slots; others 9/12/70/71/124/125…) and the moving XY/Z position does not sit at one fixed
+   payload offset across types, so clean movement trajectories need the playback code (how
+   each record is applied to an actor) reversed or a dynamic trace. (Not guessed here — a
+   wrong offset would replay avatars at garbage positions.)
 
    **Recv/dispatch** (`FUN_004a7ab0`): dequeues 64-byte packets from the per-channel ring
    buffers (`DAT_00af0b70`, 0x10 channels × 0x80 slots × 0x40 bytes), tracking per-channel
