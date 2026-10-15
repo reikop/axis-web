@@ -330,12 +330,19 @@ Each `.shp` group header stores a (partial) **texture name at group+4** (within 
 header). After loading a shape, `FUN_004658d0` iterates the groups and, for each, builds the
 full texture name by prepending a context prefix (`DAT_004b22cc` + the caller's `param_1`,
 which varies by load context) to that stored name, loads it via `FUN_00456070`, and stores
-the GL texture id at group+0x44. So the binding is **group-local but its name is resolved at
-run time with a context-dependent prefix** — applying textures correctly needs that prefix
-resolution reversed per caller (the map/object/actor load paths pass different `param_1`).
-Many groups store an empty name (untextured / default). The decoded textures (§2.2) are
-keyed by names like `SHAPE\<category>\<surface>`; only ~24 shapes share a name 1:1, so the
-mapping is material-based, not per-shape.
+the GL texture id at group+0x44.
+
+**Static limitation (verified):** the name bytes at file group+4 are **fragmentary** —
+across shapes they read as partial junk (`"GE"`, `" copy"`, `"opy"`, …), not whole texture
+names — because they are stale remnants partly clobbered by the runtime pointer fields that
+share the 0x80 group struct. No `texname → Image*.dat` formula matches (0 of 1899 tried). So
+the full per-group texture name is **reconstructed at run time** from context and cannot be
+recovered cleanly from the static `.shp` alone. Correctly texturing the meshes therefore
+needs **dynamic capture** — e.g. Frida-hook the texture-by-name loader `FUN_00456070`
+(`0x456070`) on the running game to record each resolved `(name, glTextureId)` and tie it to
+the group — which first requires launching AXIS (its own effort, as it is an online title).
+Until then the mesh/map viewers render untextured flat-shaded geometry and the texture
+gallery (§2.2) shows the textures standalone.
 
 ## 4. Next analysis targets
 
