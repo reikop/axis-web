@@ -4,7 +4,9 @@ A browser port of **AXIS** (2005 Korean 3D action game), built by reverse-engine
 the original client and recompiling its logic to WebAssembly with a WebGL/WebAudio
 platform shim.
 
-> **Status:** stage 0 (reverse-engineering) well underway; a local archive explorer runs today.
+> **Status:** reverse-engineering + asset pipeline complete — the game's maps, 3D models and
+> textures all render in the browser. The interactive runtime (animation, logic, net, WASM)
+> is the next phase.
 
 ## Quick start (local)
 
@@ -15,8 +17,15 @@ python run.py                 # auto-detects ../Axis_Win, or:
 python run.py /path/to/Axis_Win
 ```
 
-This builds a metadata catalog from your install and opens a browser explorer of every
-archive, texture (PTX) and map. Nothing is uploaded and no game data enters the repo.
+This decodes your install (archives, 1,742 meshes, ~1,800 textures, 40 map layouts) and
+opens a browser hub (`home.html`) linking four viewers:
+
+- **3D Map Viewer** — walk the real maps, rendered from their actual meshes (WASD)
+- **Mesh Viewer** — orbit any of the 1,742 extracted models
+- **Texture Gallery** — every surface texture, decoded from the custom-JPEG codec
+- **Archive Explorer** — browse the decrypted data archives
+
+Nothing is uploaded and no game data enters the repo.
 
 ## ⚠️ You must own the game
 
@@ -32,23 +41,24 @@ WebGL port realistic. Plan:
 
 | Stage | Goal | State |
 |-------|------|-------|
-| 0. Analysis | RE the engine, formats, GL usage, net protocol → `docs/SPEC.md` | ▶ archive + PTX + map pipeline done; terrain/mesh/net next |
-| 1. Asset pipeline | Archive + PTX readers, catalog, local web explorer | ✔ explorer runs; PTX→PNG pending |
-| 2. Renderer | Map + model + animation on WebGL (via the WASM build) | ◻ |
-| 3. Game logic | Combat / items / physics (WASM, behaviour-preserving) | ◻ |
-| 4. Network | Reverse the protocol → Node server + WebSocket, online multiplayer | ◻ |
+| 0. Analysis | RE engine, all file formats, GL usage → `docs/SPEC.md` | ✔ every asset format decoded |
+| 1. Asset pipeline | Archive/PTX/mesh/map readers, catalog, decoders | ✔ archives, 1,742 meshes, textures, maps |
+| 2. Renderer | Map + model + texture rendering in the browser | ✔ maps & models render (flat-shaded); textures standalone |
+| 3. Game logic | Combat / items / physics | ◻ runtime phase |
+| 4. Network | Protocol → Node server + WebSocket, online multiplayer | ◻ runtime phase |
 
-The port itself (approach B — reconstruct C++ → Emscripten/WASM + web shim) is planned in
-`port/README.md`.
+What's left is the interactive runtime: texturing meshes (needs dynamic capture — see
+`docs/SPEC.md §2.9`), skeletal animation, game logic, the network protocol & server, and the
+Emscripten/WASM build (approach B, planned in `port/README.md`).
 
 ## Layout
 
 ```
-run.py      one-shot: build catalog from your install, serve web/, open browser
-web/        offline, theme-aware archive explorer (loads a generated catalog.json)
-tools/      archive/PTX parsers, catalog builder, extractor (Python)
-docs/       reverse-engineering spec and procedure map
-port/        approach-B WASM build plan and (later) reconstructed C++ + shim
+run.py      one-shot: decode your install, serve web/, open the hub
+web/        home hub + four offline, theme-aware viewers (map/mesh/texture/archive)
+tools/      archive · obfuscation · PTX(JPEG) · .shp mesh · .bfd map decoders (Python)
+docs/       reverse-engineering spec, formats, and procedure map
+port/       approach-B WASM build plan
 ```
 
 ## Tools
