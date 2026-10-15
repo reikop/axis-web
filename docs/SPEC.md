@@ -92,11 +92,27 @@ emit(out, w, h, planes)                        # FUN_0046deb0  -> glTexImage2D b
 re-derive the DCT/entropy math in script. A standalone PNG extractor (optional, stage 1)
 would require reversing `FUN_0046e530` + `FUN_0046de30` fully.
 
-### 2.3 Binary blobs  (`Item.dat`, `Component.dat`, `Sound.dat`, `Map/*.bfd`, `*.ape`)
+### 2.3 Encrypted data files  (`Item.dat`, `Component.dat`, `Sound.dat`, `Map/*.bfd`, `*.ape`)
 
-Start with a `u32` version/count then dense binary. **File version = `0x1201`** (the
-`01 12 00 00` header seen on `.bfd` and `.ape`; checked in the autoplay path and against
-`DAT_009dbd44`, else `"file damaged"` / `"incorrect file version"`).
+These are **obfuscated**, which is why they look like runs of `0x59`. The decrypting read
+`FUN_0046c060` = plain `fread` (`FUN_0049de96`) **then per byte**:
+
+```
+b = rol8(b ^ 0x59, 1)        # XOR 0x59, then 8-bit rotate-left by 1
+```
+
+(`0x59 → 0`, so zero padding stores as `0x59`.) The transform is position-independent, so
+decrypting a whole buffer uniformly equals the per-read decryption. The 4-byte **version
+prefix** (`0x1201`, or `0x1204` for Component.dat) is read by the *plain* `FUN_0049de96`
+and stays plaintext; the rest is encrypted. `Sound.dat` is encrypted from offset 0.
+`Shape.dat` / `Skeleton.dat` / `Image*.dat` are **not** encrypted (plain `fread`).
+
+Decoder + inspector: `tools/bfd_crypt.py`, `tools/parse_bfd.py`. Decrypted, the files are
+fully legible, e.g. `Map/blocks.bfd` → `version 0x1201`, object count 10, ten 176-byte
+object records (`block\object\b_upper_3_big`, …), then `PLAYER`, `STAGE/blocks`;
+`Item.dat` → item names (`30mmShell_Box`, `Item\wapon\SRB`); `Component.dat` → mesh
+component names (`MILLIA\HEAD`). `Item`/`Component` look like the same indexed-archive
+shape as §2.1 but encrypted (exact record size still to confirm on decrypted bytes).
 
 ### 2.4 Map load pipeline  (`FUN_00467bf0`, the loading-screen state machine)
 
@@ -172,10 +188,26 @@ the rest are runtime pointer slots overwritten after load):
 
 Vertices: `x=col*spacing+ox, y=height*heightScale+oy, z=row*spacing+oz`.
 
-**Still to pin before a byte-exact parser:** bytes consumed by the sub-reader
-`FUN_004831f0(obj+0x9ccffc, file)` in the global header, and whether the 4 early settings
-use `FUN_0049df7e` to transform or just skip. Then write the parser, validate against a real
-`.bfd` (patch_count / W / H sane, whole file consumed), and render in WebGL.
+**Complete global-header fread sequence** (only these consume file bytes; the many
+`FUN_00456070` texture loads build a name and read nothing from the `.bfd`):
+
+```
+u32   version (0x1201)
+4×u32 settings (each passed through FUN_0049df7e)
+u8[256] name block
+u32   @obj+0xa08
+FUN_004831f0:  u32 n ; u32 ; n×44B records ; u32      (= 12 + 44·n bytes)
+u32 ; u8[16] ; u32 ; u8[16] ; u32 ; u32 ; u32 ; u32   (lighting/sky/fog; @0x9ee030..064)
+u32   6-tex-set count (@0x9ef0b0) ; u32 16-tex-set count (@0x9ef30c)
+4×(u8[12])  +  3×u32                                  (@0x9ef904..93c; 12B = vec3)
+u32   patch_count (@obj+0xdc0a74)
+patch[patch_count]:  u8[0x20C] struct  +  u8[(W+1)(H+1)·3] RGB heightmap block
+```
+
+Everything needed for a byte-exact parser is now known except the exact size/stride of the
+per-patch RGB block read (fixed 256-wide rows vs. packed (W+1)×3). **Next:** write
+`tools/parse_bfd.py`, validate on the smallest map (version, sane n/patch_count/W/H, file
+fully consumed), then feed the vertex/normal/UV/index buffers to a WebGL viewer.
 
 ## 3. Reverse-engineering map (procedures)
 
