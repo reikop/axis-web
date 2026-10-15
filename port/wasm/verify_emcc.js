@@ -54,7 +54,7 @@ async function main() {
   const F = n => ex[n] || ex['_' + n];
   const decrypt = F('axis_decrypt'), encrypt = F('axis_encrypt'),
         decodeState = F('axis_decode_state'), encodeState = F('axis_encode_state'),
-        rngFill = F('axis_rng_fill'), shpParse = F('axis_shp_parse');
+        rngFill = F('axis_rng_fill'), shpParse = F('axis_shp_parse'), bfdExtract = F('axis_bfd_extract');
   for (const [n, f] of [['axis_decrypt', decrypt], ['axis_encrypt', encrypt], ['axis_decode_state', decodeState], ['axis_encode_state', encodeState], ['axis_rng_fill', rngFill]])
     if (typeof f !== 'function') { console.error('missing export', n); process.exit(1); }
 
@@ -217,6 +217,44 @@ async function main() {
       }
       console.log(`\nshp mesh decode: ${ok}/${toc.length} meshes byte-identical to web/shp.js` +
         ` (${rej} rejected by both as non-mesh${over ? `, ${over} over cap` : ''}${bad ? `, ${bad} MISMATCH` : ''})`);
+      if (firstBad) console.log(`  first mismatch: ${firstBad}`);
+      fails += bad;
+    }
+  }
+
+  // ---- axis_bfd_extract: WASM map decoder vs web/bfd.js over every Map/*.bfd
+  const mapDir2 = path.join(game, 'Map');
+  if (typeof bfdExtract === 'function' && fs.existsSync(mapDir2)) {
+    let MAP;
+    try { MAP = require(path.join(__dirname, '..', '..', 'web', 'bfd.js')); }
+    catch (e) { console.log('bfd.js not loadable — skipping map check:', e.message); MAP = null; }
+    if (MAP) {
+      const BF = BASE, BP = 0x1400000, BC = 0x1480000, OCAP = 50000;   // file, pos-out, counts
+      ensure(BC + 64);
+      let ok = 0, bad = 0, nmaps = 0, firstBad = null;
+      for (const fn of fs.readdirSync(mapDir2).filter(f => /\.bfd$/i.test(f))) {
+        const raw = fs.readFileSync(path.join(mapDir2, fn));
+        const ab = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
+        const js = MAP.extractMap(ab);                       // JS: decrypt + parse
+        if (js.objects.length > OCAP) { continue; }
+        new Uint8Array(memory.buffer).set(new Uint8Array(ab), BF);   // WASM decrypts in place
+        bfdExtract(BF, raw.length, BP, BC);
+        const cnt = new Uint32Array(memory.buffer, BC, 3);
+        const posV = new Float32Array(memory.buffer, BP, js.objects.length * 3);
+        nmaps++;
+        let why = null;
+        const jsVer = parseInt(js.version, 16) >>> 0;
+        if (cnt[0] !== jsVer) why = `version ${cnt[0].toString(16)}!=${js.version}`;
+        else if (cnt[1] !== js.count) why = `count ${cnt[1]}!=${js.count}`;
+        else if (cnt[2] !== js.objects.length) why = `emitted ${cnt[2]}!=${js.objects.length}`;
+        else for (let i = 0; i < js.objects.length && !why; i++) {
+          const p = js.objects[i].pos;
+          if (!Object.is(posV[i*3], p[0]) || !Object.is(posV[i*3+1], p[1]) || !Object.is(posV[i*3+2], p[2]))
+            why = `${fn} obj[${i}] pos`;
+        }
+        if (why) { bad++; firstBad = firstBad || `${fn}: ${why}`; } else ok++;
+      }
+      console.log(`\nbfd map decode : ${ok}/${nmaps} maps byte-identical to web/bfd.js (version+count+all object positions)${bad ? `, ${bad} MISMATCH` : ''}`);
       if (firstBad) console.log(`  first mismatch: ${firstBad}`);
       fails += bad;
     }
