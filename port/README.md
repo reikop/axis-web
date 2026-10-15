@@ -42,15 +42,27 @@ AXIS geometry decoded by the linked-in, byte-exact `axis_shp.c`. Build it with `
 - `?map=CUBE` decrypts a `Map/*.bfd`, matches each placed object's name to a Shape.dat record the
   way `web/map.html` does, decodes the mesh, positions it, and renders the whole arena (68 objects
   for CUBE) — screenshot-verified, no page errors;
-- a first-person camera with WASD / look controls makes it walkable (camera render verified; the
-  key-hold input isn't separately captured in headless).
+- a first-person camera makes it walkable: **WASD move + Q/E/Space up-down** (movement verified
+  end-to-end — a real held keydown drives the camera into the arena, screenshot-confirmed), arrow
+  / I-J-K-L look, and **pointer-lock mouse look** (click the canvas);
+- **textures:** in mesh mode (`?i=N`) the engine finds the shape's `SHAPE\<name>` skin across the
+  Image archives, decodes it with the linked-in `axis_ptx.c`, and renders it UV-mapped — verified
+  (`?i=5` = `ALIEN\GIRL` textured with its real `SHAPE\ALIEN\GIRL` 256×256 skin);
+- **audio:** a ♪ button streams a `Music/*.mp3` track from the user's install (WebAudio slice).
 
-So the reconstruction now runs as compiled code driving real GPU rendering, not only as decoders.
-**What's left for a *playable* port:** the rest of the shim — textures in the engine (link
-`axis_ptx.c`), audio (WebAudio), networking (WebSocket, protocol already mapped in §4), and
-pointer-lock mouse — then the behaviour-exact **per-tick simulation**, which needs ground-truth
-from a live match the dead-server install can't reach (see `../docs/SPEC.md` §5 and §2.9). The
-simulation is the one genuinely blocked pillar; the shim is now underway and buildable here.
+So the reconstruction now runs as compiled code driving real GPU rendering with textures, input
+and audio — not only as decoders. The shim pieces (GL, window/loop, keyboard, mouse, audio,
+textures) are in and verified clean (0 page-errors).
+
+**What's left for a *playable* port:**
+- **networking** in the engine (WebSocket; the protocol is mapped in §4 and already runs as live
+  position-sharing multiplayer in `web/map.html` + `server/relay.js` — porting that into the C
+  engine is the remaining shim wiring);
+- **per-object map textures** (most building skins aren't statically resolvable — §2.9 — so this
+  is partial by nature and needs per-object draws);
+- the behaviour-exact **per-tick simulation** — the one genuinely blocked pillar: it runs only
+  inside a live match, and the dead-server install can't reach one, so there is no ground-truth to
+  reconstruct against here (see `../docs/SPEC.md` §5 and §2.9).
 
 ---
 
