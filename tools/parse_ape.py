@@ -76,8 +76,11 @@ def parse(raw):
         if t == 0:                                   # state snapshot -> trajectory
             actor = pay[4] >> 4
             x, y, z = struct.unpack_from("<hhh", pay, 5)
+            yaw = pay[0x0c] * 14.0625           # heading, X-Z plane (apply side)
+            if yaw > 1800:
+                yaw -= 3600
             tracks.setdefault(actor, []).append(
-                [tick, x * POS_SCALE, y * POS_SCALE, z * POS_SCALE])
+                [tick, x * POS_SCALE, y * POS_SCALE, z * POS_SCALE, round(yaw / 10, 1)])
         elif t == 2:                                 # identity -> name
             raw_name = pay[2:19].split(b"\x00")[0]
             try:

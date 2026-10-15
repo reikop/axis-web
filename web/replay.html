@@ -92,6 +92,13 @@ function posAt(track,t){
   const a=track[lo],b=track[hi]; const u=(t-a[0])/((b[0]-a[0])||1);
   return [a[1]+(b[1]-a[1])*u, a[2]+(b[2]-a[2])*u, a[3]+(b[3]-a[3])*u];
 }
+// nearest-sample heading (degrees, X-Z plane); angles don't interpolate across wrap
+function yawAt(track,t){
+  if(!track.length||track[0].length<5) return null;
+  let lo=0,hi=track.length-1;
+  while(hi-lo>1){ const m=(lo+hi)>>1; if(track[m][0]<=t) lo=m; else hi=m; }
+  return (t-track[lo][0] <= track[hi][0]-t) ? track[lo][4] : track[hi][4];
+}
 
 function draw(){
   const css=getComputedStyle(document.documentElement);
@@ -122,6 +129,14 @@ function draw(){
     }
     const p=posAt(a.track,T); if(!p) continue;
     const sp=proj(rot(p)); if(!sp) continue;
+    // heading arrow (verified: byte[0xc] yaw, X-Z plane; dir = (sinθ,0,cosθ))
+    const yaw=yawAt(a.track,T);
+    if(yaw!=null){
+      const th=yaw*Math.PI/180, L=ext*0.05;
+      const tip=proj(rot([p[0]+Math.sin(th)*L, p[1], p[2]+Math.cos(th)*L]));
+      if(tip){ ctx.strokeStyle=col; ctx.lineWidth=2.5*DPR; ctx.beginPath();
+        ctx.moveTo(sp[0],sp[1]); ctx.lineTo(tip[0],tip[1]); ctx.stroke(); }
+    }
     ctx.fillStyle=col; ctx.beginPath(); ctx.arc(sp[0],sp[1],6*DPR,0,7); ctx.fill();
     ctx.strokeStyle=css.getPropertyValue("--bg").trim(); ctx.lineWidth=1.5*DPR; ctx.stroke();
     ctx.fillStyle=css.getPropertyValue("--fg").trim(); ctx.font=`${12*DPR}px var(--mono),monospace`;

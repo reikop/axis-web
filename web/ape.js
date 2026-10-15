@@ -62,7 +62,10 @@
         const actor = u8[p + 4] >> 4;
         // int16 world coords; the engine's apply side (FUN_0048bca0) scales by 10
         const x = dv.getInt16(p + 5, true) * 10, y = dv.getInt16(p + 7, true) * 10, z = dv.getInt16(p + 9, true) * 10;
-        (tracks[actor] || (tracks[actor] = [])).push([tick, x, y, z]);
+        // heading (yaw) = byte[0xc] * 14.0625, wrapped to +/-1800 -> degrees (X-Z plane, Y up).
+        // verified: correlates with movement direction (atan2(dx,dz), ~13deg median on actor 0).
+        let yaw = u8[p + 0x0c] * 14.0625; if (yaw > 1800) yaw -= 3600; yaw /= 10;
+        (tracks[actor] || (tracks[actor] = [])).push([tick, x, y, z, yaw]);
       } else if (t === 2) {
         const nm = name(u8, p + 2, 17);
         const a = u8[p + 22] < 16 ? u8[p + 22] : 0;

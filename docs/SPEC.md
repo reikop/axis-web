@@ -517,7 +517,10 @@ by `run.py` at `/game/`; `web/audio.json` holds only filenames — no audio is c
    (verified, and it confirms the builder exactly) reads `actor = payload[4]>>4`, position
    int16 at `[5]/[7]/[9]`, then writes the actor's world transform with the real **unit scales**:
    * **position = int16 × 10.0** (so replay/`ape.js` coords are the raw int16 ×10 = true world units),
-   * yaw/pitch = `byte × 14.0625` wrapped to ±1800, velocity = `byte × 0.1`, trim nibbles × 1/15,
+   * angles = `byte × 14.0625` wrapped to ±1800 (= ±180.0°): **`[0xc]` = yaw/heading**
+     (full ±180°; verified — it tracks each player's movement direction `atan2(dx,dz)` to a
+     ~13° median on actor 0, so the **ground plane is X–Z and Y is up**), `[0xb]` = pitch
+     (±90°), `[0x10]` a further limited-range angle; velocity = `byte × 0.1`, trim nibbles × 1/15,
    * then the five 9-byte weapon/turret sub-records (flags, target id, 3 aim shorts ×10) — the
      same layout the builder emits. The **type-1 apply** nests `switch(payload[0x2b])` on the
      RNG stream selector, advancing the shared table — the determinism hook.
