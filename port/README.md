@@ -1,5 +1,26 @@
 # Approach B — WASM port plan
 
+## Status: the WASM path is live and verified
+
+The first reconstructed primitive — the AXIS obfuscation cipher
+(`src/axis_crypt.c`, from `AXIS.EXE` `FUN_0046c060`/`FUN_0046c0b0`, SPEC §2.3) — already
+**runs as WebAssembly and is verified byte-for-byte on the real game files**, in two ways:
+
+- `build.sh` compiles `src/*.c` to WASM with Emscripten (run in WSL; see below).
+- Because this repo was produced with no C toolchain, `node wasm/build_wasm.js <game_dir>`
+  **hand-assembles the identical module** (202 bytes) and verifies it: decrypt == reference
+  and encrypt∘decrypt == identity, then decrypts every `Map/*.bfd`, `AutoPlay/*.ape` and
+  `Sound.dat` byte-identically (10/10 pass). It also emits `web/crypt.js` (the module embedded
+  for the browser), and `web/wasm.html` shows it decrypting your files in-browser with the
+  **WASM** backend (verified: all PASS, 0 errors).
+
+So approach B is proven end-to-end in this environment: reconstructed AXIS logic → WASM →
+runs in Node and in the browser on real data. Each further `src/*.c` (archive index, PTX
+codec, `.shp` mesh, map decode, then the simulation) is added to `build.sh`'s `SRC` list the
+same way.
+
+---
+
 Reconstruct the client as C++ and compile it to WebAssembly with Emscripten, replacing
 the Win32 / OpenGL / DirectSound / DirectInput / Winsock platform layer with a web shim.
 This keeps the game's own logic and data formats behaviour-exact; only the OS boundary is
