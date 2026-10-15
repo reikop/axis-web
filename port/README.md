@@ -1,43 +1,37 @@
 # Approach B — WASM port plan
 
-## Status: the WASM path is live and verified
+## Status: the WASM path is live and verified — the whole data layer
 
-Two reconstructed primitives already **run as WebAssembly and are verified on the real game
-files** (not just the cipher):
+The Emscripten toolchain is set up and working (Ubuntu/WSL2, `emcc 3.1.69`, `node v22`), and the
+**entire offline-verifiable AXIS data + determinism layer is now reconstructed to C, compiled to
+one standalone WASM reactor (`wasm/axis.wasm`, ~13 KB), and verified byte-exact against the
+JS/Python references on the user's real game files** by `wasm/verify_emcc.js`:
 
-- `src/axis_crypt.c` — the obfuscation cipher (`FUN_0046c060`/`FUN_0046c0b0`, SPEC §2.3).
-- `src/axis_netdecode.c` — the type-0 state-packet **codec**: `axis_decode_state` (`FUN_0048bca0`
-  case 0) → actor + world position (int16×10) + heading, and its inverse `axis_encode_state`
-  (the send side, `FUN_0048d750`) that builds an AXIS-format state packet. **`node wasm/build_wasm.js`
-  verifies both f32-exact on all 6844 type-0 packets of a real replay — decode 6844/6844, encode
-  6844/6844, and encode∘decode recovers every original packet.** So a WASM client can both parse
-  and emit the game's real wire format, not an ad-hoc relay format.
-- `src/axis_rng.c` — `axis_rng_fill` builds the game's **shared deterministic RNG pool** (the
-  lockstep core, SPEC §5). AXIS loads a 4096-entry pool from `MATHFUNC.TBL`; it is exactly the
-  MSVC `rand()` LCG seeded with `srand(1)`. **Verified: the WASM fill matches the MSVC reference
-  4096/4096 AND the shipped MATHFUNC.TBL pool 4096/4096**, so a WASM client reproduces the exact
-  shared pool and can stay in lockstep with the original game's spawns/AI/damage decisions.
+| `src/*.c` | what it reconstructs | verified on real data |
+|-----------|----------------------|------------------------|
+| `axis_crypt.c`     | obfuscation cipher (`FUN_0046c060/c0b0`, §2.3) | 10/10 `Map/*.bfd` + `*.ape` + `Sound.dat` byte-identical |
+| `axis_netdecode.c` | type-0 state-packet codec, decode+encode (`FUN_0048bca0`/`d750`, §4) | decode 6844/6844, encode 6844/6844 f32-exact |
+| `axis_rng.c`       | shared deterministic RNG pool (`MATHFUNC.TBL`, §5) | 4096/4096 vs MSVC `rand(srand(1))` and the shipped pool |
+| `axis_shp.c`       | `.shp` mesh geometry (§2.1/§2.8) | 1743/1743 meshes byte-identical |
+| `axis_bfd.c`       | `.bfd` map decrypt + object placements (§2.6) | 40/40 maps byte-identical |
+| `axis_ptx.c`       | PTX baseline-JPEG texture decode (§2.2) | 87/87 sampled textures byte-identical |
+| `axis_skel.c`      | `Skeleton.dat` bone records (§2.10) | 232/232 rigs byte-identical |
+| `axis_ape.c`       | `.ape` replay trajectories (§4) | 4/4 replays byte-identical |
 
-Both are verified **two independent ways**, and both now pass on the real game data:
+So a WASM client parses and emits the game's real wire format, reproduces its exact lockstep RNG,
+and decodes every mesh, map, texture, rig and replay straight from the user's raw files — all
+compiler-built, no JS fallback needed. Build + verify: `./build.sh /path/to/Axis_Win`.
 
-- **Emscripten compiler path (`build.sh`)** — now confirmed working. Built with the Ubuntu/WSL2
-  distro emscripten (`emcc 3.1.69`, `node v22`) to a 1102-byte standalone reactor WASM, then
-  `wasm/verify_emcc.js` instantiates it headless and checks it against your real files:
-  cipher **10/10** byte-identical, state decode **6844/6844** and encode **6844/6844** f32-exact
-  (plus encode∘decode recovering every original packet), rng **4096/4096** vs the MSVC reference
-  **and** the shipped `MATHFUNC.TBL` pool. This is the path the larger reconstructions (mesh/map
-  decode, then the simulation) must use — they can't be hand-assembled.
-- **No-toolchain path (`node wasm/build_wasm.js <game_dir>`)** — for environments without emcc,
-  **hand-assembles the identical module** (~300 bytes) and runs the same checks (cipher 10/10,
-  state 6844/6844, rng 4096/4096). It also emits `web/crypt.js` (the module embedded for the
-  browser), and `web/wasm.html` shows it decrypting your files in-browser with the **WASM**
-  backend (verified: all PASS, 0 errors).
+The cipher/state/rng core is **also** verified a second, independent way for environments without
+emcc: `node wasm/build_wasm.js <game_dir>` hand-assembles a byte-identical module with no
+toolchain (same checks pass), emits `web/crypt.js` (module embedded for the browser), and
+`web/wasm.html` shows it running in-browser with the **WASM** backend (all PASS, 0 errors).
 
-So approach B is proven end-to-end **both** by a real compiler and by the no-toolchain fallback:
-reconstructed AXIS logic → WASM → runs in Node and in the browser on real data, bit-for-bit
-matched between the two builds and the reference. Each further `src/*.c` (archive index, PTX
-codec, `.shp` mesh, map decode, then the simulation) is added to `build.sh`'s `SRC` list the
-same way; `wasm/axis.wasm` is a build artifact and is gitignored (regenerate with `build.sh`).
+`wasm/axis.wasm` is a build artifact and is gitignored (regenerate with `build.sh`). What remains
+for a *playable* port is not more decoders but the two pieces this environment can't finish and
+verify offline: the platform **shim** + main loop (GL/window/input/audio/sockets — the table
+below), and the behaviour-exact **per-tick simulation**, which needs ground-truth from a live
+match the dead-server install can't reach (see `../docs/SPEC.md` §5 and §2.9).
 
 ---
 

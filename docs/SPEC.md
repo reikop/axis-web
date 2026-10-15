@@ -648,8 +648,18 @@ even with a loopback listener up on `:7777`/`:7778`, makes **no `connect`/`socke
 game-level send/recv in 60 s** (the busy `WSAGetLastError` churn is all inside transient system
 DLLs, never AXIS's own net code). So it blocks *before* the client's own connect logic — the
 lobby/live-match, and with it the map building/terrain-texture binding (§2.9) and the animation
-time-base (§2.10), stay unreachable by dynamic capture here. Those are the genuine remaining
-frontier; the data-decode reconstructions (archive/PTX/.shp/.bfd) are instead verifiable offline
-against the JS/Python references and are the natural next `port/src/*.c` modules.
+time-base (§2.10), stay unreachable by dynamic capture here.
+
+**Decoder layer DONE (2026-10-16).** Everything verifiable offline is now reconstructed to C and
+compiled to one standalone WASM reactor (`port/wasm/axis.wasm`, ~13 KB), each module checked
+byte-exact against the JS/Python references on the real game files by `port/wasm/verify_emcc.js`:
+`axis_crypt` (cipher 10/10), `axis_netdecode` (state 6844/6844 each way), `axis_rng` (4096/4096),
+`axis_shp` (mesh 1743/1743), `axis_bfd` (maps 40/40), `axis_ptx` (textures 87/87), `axis_skel`
+(rigs 232/232), `axis_ape` (replays 4/4). The PTX decoder reaches byte-exactness by embedding the
+IDCT basis as exact 64-bit patterns + `-ffp-contract=off` (wasm has no FMA), so its float pipeline
+rounds identically to the reference. What remains for a *playable* port is the platform shim +
+main loop (GL/window/input/audio/sockets) and the behaviour-exact per-tick simulation above —
+the simulation blocked not by tooling now but by ground-truth (a live match the offline install
+can't reach).
 
 See `../port/README.md` for how these feed the approach-B WASM build.
