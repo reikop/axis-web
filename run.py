@@ -79,6 +79,13 @@ def main():
                          os.path.join(HERE, "tools", "export_shapes.py"),
                          shape_dat, os.path.join(WEB, "shapes")])
 
+    # export bind-pose skeletons from Skeleton.dat for the skeleton viewer
+    skel_dat = os.path.join(game, "Data", "Skeleton.dat")
+    if os.path.isfile(skel_dat):
+        subprocess.call([sys.executable, "-I",
+                         os.path.join(HERE, "tools", "parse_skeleton.py"),
+                         skel_dat, os.path.join(WEB, "skeletons")])
+
     # decode textures (PTX -> PNG) for the gallery
     if os.path.isfile(os.path.join(game, "AXIS.EXE")):
         subprocess.call([sys.executable, "-I",

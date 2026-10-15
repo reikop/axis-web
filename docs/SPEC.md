@@ -348,20 +348,34 @@ gallery (§2.2) shows the textures standalone.
 
 `Skeleton.dat` is the plaintext indexed archive (§2.1); each of its 232 entries is one
 skeleton, loaded by `getSkeletonPtrBy()` (mirrors the shape loader, `0x4c6440`
-"class SkeletonManager"). Per-entry layout (from `ARM\BITRON-BAAL-ARM`, 2420 B):
+"class SkeletonManager"). Per-entry layout (confirmed on `ARM\BITRON-BAAL-ARM`, 2420 B,
+`LEG\…BOOATERLEG-LEG`, and all 232 rigs):
 
 ```
 header:  i32 @0x10 = bone count (e.g. 10) ; also size@0x04, flags@0x18/0x1c ; sentinel saved ptrs
 bone[boneCount], 0x70 (112) bytes each, first at +0x24:
-    char name[...]          e.g. "LSHO", "LARM01", "LARM02" (robot-arm joints)
-    f32  transform          bind-pose position + orientation (exact field split TBD)
-<animation keyframes follow>
+    +0x00  char name[0x40]   NUL-terminated joint name  ("LSHO","LARM01","LARM02"…)
+    +0x40  i32  parent       parent bone index, -1 = root
+    +0x44  f32  tx, ty, tz    local translation from parent (= real bone lengths)
+    +0x50  f32  angle         rotation angle, radians          \  axis-angle local
+    +0x54  f32  ax, ay, az    unit rotation axis (|axis| ~= 1)  /  orientation
+    +0x60  ...                runtime-only fields / saved pointers (clobbered in file)
+<per-bone animation keyframe tracks follow>
 ```
 
-Bone-record stride 0x70 confirmed by the name offsets (0x24, 0x94, 0x104 …). The mesh's
-per-vertex `attr` (4 bytes, §2.8) is the likely bone-index/weight for skinning. Full
-animation = these skeletons + per-bone keyframe tracks + the `attr` skin binding — the next
-step for animated models.
+The field split is **verified, not inferred**: the `parent` indices reconstruct exact,
+sane hierarchies (ARM: LSHO→LARM01→LARM02→LFIST ×2; LEG: each LEG root → 3 foot nodes),
+and the decode shows perfect **left/right mirror symmetry** — both arms give bone lengths
+125.9 / 75.6 / 264.8, both legs' foot nodes land on one Y plane. Every bone's axis is
+unit-length (`|axis|≈1.0`), confirming axis-angle. World bind-pose joints:
+`world[b] = world[parent[b]] · Translate(t) · AxisAngle(angle, axis)`.
+
+Tools: `tools/parse_skeleton.py` (parse + export per-rig JSON with precomputed world
+joints), JS port `web/skel.js` (byte-exact, verified by `tools/verify_skel_js.js`),
+viewer `web/skeleton.html` (orbitable bind-pose rig, live from Skeleton.dat). The mesh's
+per-vertex `attr` (4 bytes, §2.8) is the likely bone-index/weight for skinning. Remaining
+for full animation = the per-bone keyframe tracks after the bone array + the `attr` skin
+binding to deform the mesh — the next step for animated models.
 
 ## 4. Next analysis targets
 
