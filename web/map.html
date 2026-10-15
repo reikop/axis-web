@@ -45,6 +45,7 @@
     <div class="stat" id="stats"></div>
     <label class="rowc"><input type="checkbox" id="meshes" checked> render meshes</label>
     <label class="rowc"><input type="checkbox" id="wire"> wireframe</label>
+    <label class="rowc"><input type="checkbox" id="fpv"> walk inside (first-person)</label>
     <div style="border-top:1px solid var(--line);padding-top:12px;margin-top:2px">
       <label>Multiplayer</label>
       <input id="mpurl" type="text" value="ws://127.0.0.1:8140" style="width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:7px 9px;font:12px/1 var(--mono);margin-bottom:7px">
@@ -213,10 +214,16 @@ cv.addEventListener("pointerup",()=>drag=null);
 cv.addEventListener("wheel",e=>{e.preventDefault();dist=Math.max(0.6,Math.min(8,dist*(e.deltaY>0?1.1:0.9)));draw();},{passive:false});
 document.getElementById("meshes").addEventListener("change",e=>{useMesh=e.target.checked;draw();});
 document.getElementById("wire").addEventListener("change",e=>{wire=e.target.checked;draw();});
+let orbitDist=2.4;
+document.getElementById("fpv").addEventListener("change",e=>{
+  if(e.target.checked){ orbitDist=dist; dist=0.22; pitch=0.15; }   // step inside the world
+  else { dist=orbitDist; }
+  draw();
+});
 
 // WASD walk: translate the look-at centre along the current view's ground axes
 addEventListener("keydown",e=>{
-  const k=e.key.toLowerCase(); const step=ext*0.04;
+  const k=e.key.toLowerCase(); const step=ext*(dist<1?0.012:0.04);
   const cy=Math.cos(yaw),sy=Math.sin(yaw);
   // forward (into screen, on X-Z plane) and right vectors from yaw
   const fwd=[-sy,0,-cy], right=[cy,0,-sy];
