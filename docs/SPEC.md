@@ -845,6 +845,27 @@ pickups (`axis_pickup`); plus the shared collision broad/narrow phases. The only
 reconstructed is the authoritative actor input→acceleration transfer (server-side, no offline ground
 truth; the client-side motion is the verified const-velocity dead-reckoning of §5).
 
+**Client input gathering = the sampling half of `FUN_0048d080`, reconstructed + verified (2026-10-16).**
+The type-1 "player action" packet builder (SPEC §4) scans the client's 16 action channels each tick and
+builds two 16-bit **edge-triggered** masks — presses and releases — consuming (clearing) each channel's
+latch as it reads it, so an event is reported exactly once: `for i<16: if channel_enabled(i)
+(FUN_004a7d60==1): if pressLatch[i]==1 {clear; pressMask|=1<<i}; if releaseLatch[i]==1 {clear;
+releaseMask|=1<<i}`. Crucially this is the *whole* of the client-side input→intent processing on the
+per-tick path: the masks plus the player's aim and position are then copied into the packet — and the
+position/orientation are **read from** the actor state block (`in_ECX+0x1eccb54/0x58`, written by the
+network type-0 apply + client dead-reckoning), not computed from input. So there is **no
+input→acceleration integration in any client per-tick function** — it is authoritative/server-side,
+which is why it has no offline ground truth (and the dead servers put it out of reach), confirming the
+§5 ceiling rather than leaving a client function unread. The reconstructable client input piece is the
+edge-trigger mask builder, written as clean original C in `port/sim/axis_input.c`
+(`axis_input_build_masks`, `axis_input_mask_has`). `port/sim/axis_input_test.c` (native `cc`, ALL PASS;
+`emcc`-clean) verifies it: a latched press/release on an enabled channel becomes exactly one mask bit,
+the latch is consumed so the next tick is empty, press and release are independent, a disabled channel
+is ignored with its latch preserved, and bit positions match the channel index. So the client per-tick
+surface is now fully reconstructed + verified: four dispatchers (effects/projectiles/props/pickups),
+the shared collision broad+narrow phases, and the input mask builder; the authoritative input→accel
+transfer is the one piece that provably runs only server-side.
+
 **Two hard constraints on finishing the per-entity physics** (`FUN_00479750` et al.):
 1. *No offline ground-truth* — replays carry player state only (above).
 2. *x87 80-bit intermediates* — the decompile shows `float10` (x87 extended precision) temporaries in
