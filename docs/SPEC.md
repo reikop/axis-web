@@ -379,11 +379,21 @@ archive entry; that was a backslash-escaping bug in the search — corrected.) T
 (`TEXTURE\00`, `IFTEX\MAINMENU01`, …) with a `*` context prefix, resolving straight into the
 six Image pages that `FUN_00456070` searches.
 
-So the only piece left for textured rendering is the **per-group material index NN** — which
-`Texture\NN` each group uses. The dynamic capture gives it per render-object (groups bound to
-`Texture\00`/`01`/`02`/`07`); baking a `shape → [group → Texture\NN]` table (hook the shape
-loader for names alongside `FUN_004658d0`) lets the mesh/map viewers load `TEXTURE\NN` from the
-Image archives via `ptx.js` and apply it per group.
+**Where the name comes from (chain fully mapped).** `FUN_004658d0(param_1=texname, …)` iterates
+the shape's groups (`count@shape+0x10`, array@`shape+0x14`, stride `0x80`, name@`group+4`, GL
+id→`group+0x44`): when `param_1` is non-empty it overwrites **every** group's name with
+`DAT_004b22cc`+`param_1` (one texture per shape-render); when empty each group keeps its own
+`group+4`. Verified statically: `group+4` in the `.shp` is **empty / stale** (`''`, `' copy'`)
+— the name is **not** in the mesh. `FUN_004658d0`'s only caller is the shape loader
+`FUN_00466260`, so the texture name is **passed into the shape load**, decided by the caller:
+* **items / map props** use a name derived from the shape's own path — e.g. the warpzone shape
+  bound to `SHAPE\ITEM\WARPZONE\WARPZONE` (its own path), which *is* an `Image0.dat` entry;
+* **mechs / parts** use the numbered loadout skins `Texture\NN` (from the component/loadout).
+The `.bfd` map record carries only the object's shape path (no texture field), so for map props
+the texture follows from that path. So textured rendering is: resolve each object's texture name
+by type (path-derived for props, `Texture\NN` for mechs) → load that PTX from the Image pages
+via `ptx.js` → apply. The name-derivation per type (and the loadout→`NN` mapping) is the bounded
+remaining work; the decode and the binding mechanism are solved.
 `port/frida/capture_textures.js` reproduces the capture (its header has the one-time registry
 setup; remove with `reg delete "HKCU\SOFTWARE\AxisArena" /f`).
 
