@@ -369,15 +369,22 @@ hooking `FUN_004658d0` + `FUN_00456070`) recorded the real bindings:
   (`Shape\item\warpzone\{warpzone,teleport_ani,cic_ani}`). This is why the static group+4 bytes
   read as junk: the real name is this short runtime-built `Texture\NN`, not stored whole.
 
-So the binding scheme is now known, and **the full chain is confirmed end-to-end**: a mesh
-group binds to `Texture\NN`, and `TEXTURE\NN` **is a real entry in `Image5.dat`** (e.g.
-`TEXTURE\00`..`TEXTURE\05`(+`_ALPHA`) in Image5, `TEXTURE\08` in Image0; the `IFTEX\*` UI set
-in Image3/Image5; the warpzone/item names in Image0) — i.e. the ordinary PTX textures the
-viewers **already decode** (`ptx.js`, §2.2). (An earlier note here said `TEXTURE\NN` matched no
-archive entry; that was a backslash-escaping bug in the search — corrected.) The dynamic loader
-`FUN_00454f30` confirms it: every slot loads as **PTX (fmt 0)** by its full name
-(`TEXTURE\00`, `IFTEX\MAINMENU01`, …) with a `*` context prefix, resolving straight into the
-six Image pages that `FUN_00456070` searches.
+So the binding scheme is known and the loader resolves a name straight into the six Image pages
+(`FUN_00454f30`, every slot **PTX fmt 0**, `*` context prefix). **But a `Texture\NN` is a
+per-context slot, not a fixed skin** — crucial caveat: the global `TEXTURE\00..09` entries in
+`Image5.dat` are the **menu/default effects atlases** (sparkles, glows, UI buttons, a bullet — verified
+by decoding them), *not* a given map's building textures. When a **map** loads it fills those
+slots from its **own** textures, which live under `STAGE\<MAPNAME>\…` (e.g. `STAGE\METROPOLIS\`
+has `METROPOLIS` (a skybox/backdrop panorama), `CLAN`, `SKYINNERLAYER`, `SKYOUTERLAYER`; other
+stages add `SIDELAYER*`, `SPHERE*`). So `Texture\NN` only means the right thing *in that map's
+context*. What **is** statically and correctly resolvable is a shape's **own skin**
+`SHAPE\<name>` (e.g. `SHAPE\ALIEN\GIRL`, `SHAPE\ALIEN\ADD01`, `SHAPE\FINALLYFREE\TREE`, weapon
+shapes) — those are real PTX entries the viewers decode (`ptx.js`, §2.2) and apply by UV, and
+they are the textures `web/shapetex.html` and `map.html` use. The per-group numeric index `NN`
+(stored in `group+4`) selects a per-map slot and is **not** resolved to the global `TEXTURE\NN`
+(doing so paints generic effects atlases on buildings — a bug corrected here); correct map
+geometry texturing needs the `STAGE\<map>\*` set plus the `NN`→`STAGE` slot mapping, which is a
+per-map/context binding not recoverable from the static mesh alone.
 
 **Where the name comes from (chain fully mapped).** `FUN_004658d0(param_1=texname, …)` iterates
 the shape's groups (`count@shape+0x10`, array@`shape+0x14`, stride `0x80`, name@`group+4`, GL

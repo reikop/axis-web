@@ -87,11 +87,12 @@ function texByName(name){
   }
   texCache.set(up,out); return out;
 }
-// resolve a group's skin: index "NN" -> TEXTURE\NN (try padded), else the shape's SHAPE\<name>
+// resolve a group's skin: the shape's own SHAPE\<name> is the verified-correct texture.
+// A numeric group index "NN" is a per-map material slot (filled from the map's STAGE\<map>\*
+// textures at load, not the global generic TEXTURE\NN), so it isn't resolvable statically —
+// those groups stay flat rather than showing the wrong skin. (SPEC §2.9.)
 function groupTex(shapeName, tex4){
   if(!EXE) return null;
-  if(tex4){ const cs=[tex4]; if(/^\d+$/.test(tex4)) cs.push(tex4.padStart(2,"0"));
-    for(const c of cs){ const t=texByName("TEXTURE\\"+c); if(t) return t; } return null; }
   return texByName("SHAPE\\"+shapeName);
 }
 // per-triangle texture array for a mesh (computed once per cached shape)

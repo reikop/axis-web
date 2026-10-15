@@ -143,10 +143,12 @@ function texByName(name){
   }
   texCanvasCache.set(up,out); return out;
 }
-// resolve a group's texture: per-group index "NN" -> TEXTURE\NN (try padded), else shape skin SHAPE\<name>
+// resolve a group's texture. The shape's own skin SHAPE\<name> is the verified-correct
+// texture (e.g. ALIEN\GIRL -> SHAPE\ALIEN\GIRL). A numeric group index "NN" is a per-MAP
+// material slot filled at map-load time from the map's own STAGE\<map>\* textures (NOT the
+// global TEXTURE\NN, which are generic effects atlases) — so it can't be resolved statically
+// here; leave those groups untextured rather than show the wrong skin. (SPEC §2.9.)
 function groupTex(shapeName, tex4){
-  if(tex4){ const cands=[tex4]; if(/^\d+$/.test(tex4)) cands.push(tex4.padStart(2,"0"));
-    for(const cc of cands){ const t=texByName("TEXTURE\\"+cc); if(t) return t; } return null; }
   return texByName("SHAPE\\"+shapeName);
 }
 
@@ -196,20 +198,12 @@ async function init(){
     }
     const texNames=new Set();
     for(const im of IMG) for(const e of im.toc) texNames.add(e.name.toUpperCase());
-    // group+4 texture indices, read from headers only (fast) — a shape is texturable if it
-    // has a SHAPE\<name> skin or any group with a stored texture index.
-    const dvS=new DataView(SHAPE), u8S=new Uint8Array(SHAPE);
-    function hasGroupTex(off){
-      const gc=dvS.getInt32(off+0x10,true); if(gc<=0||gc>2000) return false;
-      for(let g=0;g<gc;g++){ const base=off+0x4c+g*0x80+4; if(base+1>SHAPE.byteLength) break;
-        if(u8S[base]) return true; }   // non-empty group+4 = has a stored texture index
-      return false;
-    }
-    SHAPES=toc.filter(e=>texNames.has(("SHAPE\\"+e.name).toUpperCase()) || hasGroupTex(e.off));
+    // keep meshes whose own skin SHAPE\<name> exists (the verified-correct textures)
+    SHAPES=toc.filter(e=>texNames.has(("SHAPE\\"+e.name).toUpperCase()));
     const sel=document.getElementById("sel");
     sel.innerHTML=SHAPES.map((e,i)=>`<option value="${i}">${e.name}</option>`).join("");
-    document.querySelector(".sub").textContent=`${SHAPES.length} texturable meshes · live from Shape.dat + Image*.dat`;
-    let start=SHAPES.findIndex(e=>e.name.toUpperCase().endsWith("BLDG_OS01")); if(start<0)start=SHAPES.findIndex(e=>e.name.toUpperCase().endsWith("GIRL")); if(start<0)start=0;
+    document.querySelector(".sub").textContent=`${SHAPES.length} meshes with their real skin · live from Shape.dat + Image*.dat`;
+    let start=SHAPES.findIndex(e=>e.name.toUpperCase().endsWith("GIRL")); if(start<0)start=0;
     try{const s=+localStorage.getItem("axtex"); if(s>=0&&s<SHAPES.length)start=s;}catch(_){}
     sel.value=start; sel.addEventListener("change",()=>load(+sel.value));
     resize(); load(start); loop();
