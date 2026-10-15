@@ -4,15 +4,25 @@ A browser port of **AXIS** (2005 Korean 3D action game), built by reverse-engine
 original OpenGL client and recompiling its logic to WebAssembly with a WebGL / WebAudio /
 WebSocket platform shim (approach B — see `port/README.md`).
 
-> **Status.** The entire offline-verifiable game runs in the browser as compiled WebAssembly:
-> all eight asset/determinism decoders are reconstructed to C and verified **byte-exact** against
-> the original data, and a compiled-C → WebGL **engine** renders real textured maps and meshes,
-> is **walkable** (WASD + mouse-look), plays the game's music, and does **real-protocol
-> multiplayer**. The movement model and the RNG lockstep determinism are reconstructed and
-> **verified against recorded matches**. The port is **not yet complete**: the client's per-entity
-> movement/physics tick (`FUN_00479750`, ~10 KB of vector math) is real code in `AXIS.EXE` and is
-> **not yet reconstructed** — that is the honest remaining pillar (details below). Damage *scoring*
-> is server-authoritative (the client only applies received HP).
+> **Status.** The entire offline-verifiable game runs in the browser as compiled WebAssembly.
+> All eight asset/determinism decoders are reconstructed to C and verified **byte-exact** against
+> the original data; a compiled-C → WebGL **engine** renders real textured maps and meshes, is
+> **walkable** (WASD + mouse-look, with **collision against the real map geometry** — you can't
+> walk through buildings), plays the game's music, and does **real-protocol multiplayer**. The
+> **entire client per-tick simulation surface is reconstructed as clean, independently-verified
+> layers** (`port/sim/`) and **wired live into the engine**: homing-projectile combat, broad- +
+> narrow-phase collision, gravity debris/effects, animated proximity props, item pickups, and
+> edge-triggered input. Together they make a playable loop on the real maps — walk an AXIS arena
+> and press **F** to fire a projectile that homes, collides with the level, and bursts debris
+> (`?map=NAME&proj`). Movement kinematics and RNG lockstep determinism are verified **against
+> recorded matches** (RNG **247/247**).
+>
+> **The one genuinely unreconstructed piece** is the authoritative **input → acceleration**
+> transfer. Reading the client's per-tick code shows the player's position/orientation are *read
+> from* the networked actor state (type-0 snapshots + client dead-reckoning), never computed from
+> input on the client — so that transfer runs server-side, and with the original servers long gone
+> there is no offline ground truth to reconstruct or verify it against. Everything the client
+> itself runs per tick **is** reconstructed and verified; details below.
 
 ## Quick start (local)
 
@@ -31,8 +41,9 @@ cd port && ./build_engine.sh /path/to/Axis_Win
 The hub links the viewers (map, mesh, textured mesh, skeleton, replay, textures, audio, archive,
 the WASM decrypt/decode proofs) and the **WASM Engine** — a real Emscripten program that opens a
 WebGL context and renders your maps/meshes from the same byte-exact reconstruction. Walk it with
-WASD + Q/E/Space, look with the mouse (click to lock) or the arrow keys, play music, and connect
-to the relay for multiplayer (`?map=NAME&mp`).
+WASD + Q/E/Space (collision stops you at walls), look with the mouse (click to lock) or the arrow
+keys, play music, connect to the relay for multiplayer (`?map=NAME&mp`), and run the reconstructed
+simulation with `?map=NAME&proj` — **press F to fire**.
 
 ## ⚠️ You must own the game
 
@@ -52,29 +63,37 @@ the game's data directory is ever committed (see `.gitignore`: `*.dat`, `*.bfd`,
 | 3. Platform shim | window/loop, keyboard, mouse, audio, networking | ✔ all pillars, 0 page-errors |
 | 4. Network | §4 protocol → `server/relay.js` + WebSocket, real-protocol multiplayer | ✔ engine + `web/map.html`, verified vs a relay + ghost |
 | 5. Movement + determinism | reconstruct + verify motion and RNG from recorded matches | ✔ `tools/verify_motion.js` (const-velocity) + `tools/verify_rng.js` (RNG lockstep **247/247**) |
-| 6. Per-entity simulation | the per-tick movement/physics step (`FUN_00479750` …) | ◐ **in progress** — homing-projectile physics core reconstructed + verified (`port/sim/`); collision/other entity types remain |
+| 6. Per-tick simulation | reconstruct every client per-tick system as verified layers + wire them live | ✔ `port/sim/` — all four dispatchers + collision + input, native-test verified, running in the engine |
 
-### The genuinely unfinished pillar: the per-entity simulation
+### The per-tick simulation (reconstructed, verified, wired)
 
-The port is **not** 100% complete, and I won't pretend otherwise. The client runs a substantial
-per-entity simulation each tick: `FUN_0047c480` loops the active entities and calls **`FUN_00479750`**
-— ~10 KB / 133 blocks of heavy floating-point (vector math, `sqrt`, ~400 float temporaries) over the
-actor state block. That is real movement/physics code **in `AXIS.EXE`**, and it is **not yet
-reconstructed**. (Two sibling functions earlier mislabelled as combat sim really are only helpers —
-`FUN_004962d0` an animation frame-timer, `FUN_0048f1e0` a scene loader — but `FUN_00479750` is the
-real thing; an earlier draft of these docs wrongly claimed the whole sim was server-side, and that is
-retracted.)
+The client runs four per-entity dispatchers each tick plus a shared collision query; **all of them,
+and the client input path, are reconstructed as clean original C in `port/sim/`**, each with a
+native-`cc` test that checks its behaviour against mathematical/geometric identities (no live server
+needed), and all are **wired into the engine** and exercised in the browser on real maps:
 
-What **is** done and verified: state application, the deterministic **RNG participation** (type-1
-spawn/param draws, verified **247/247** against a real match), **movement kinematics** (verified
-const-velocity), animation and rendering. Damage/hit *scoring* is server-authoritative (the client
-only applies type-14 HP), but the local per-entity tick is client code a full port must reconstruct.
+| Client per-tick system | origin | reconstruction |
+|------|--------|----------------|
+| projectile combat (homing, swept hit, knockback) | `FUN_00479750` / `FUN_0047c480` | `axis_proj.c` + `axis_tick.c` + `axis_target.c` + `axis_vecmath.c` |
+| collision broad phase (segment → local AABB, Cohen–Sutherland) | `FUN_00470bc0` | `axis_broadphase.c` |
+| collision narrow phase (segment ↔ triangle) | `FUN_004824e0` | `axis_collide.c` |
+| effects / gravity debris | `FUN_00475890` (type A) | `axis_effect.c` |
+| animated / interactive props (phase, proximity, glow) | `FUN_0048f8d0` (type C) | `axis_prop.c` |
+| item / ammo pickups | `FUN_0048e220` | `axis_pickup.c` |
+| client input (edge-triggered action masks) | `FUN_0048d080` sampling half | `axis_input.c` |
 
-Reconstructing `FUN_00479750` (plus its callees and the full state-block field layout) is a large
-multi-function effort; because the RNG stream is deterministic and verified, a reconstruction could be
-checked by replaying a recorded match's inputs/RNG against the recorded positions. That work is
-outstanding — left honestly unfinished rather than guess-filled, so nothing in this repo is presented
-as verified that isn't.
+The `?proj` demo runs these together on any loaded map: homing projectiles collide with the real
+building geometry and burst debris, a proximity gate opens, pickups are collected, and **F fires** a
+camera projectile — a minimal playable shoot loop built entirely from the reconstructed layers,
+verified in-browser on CUBE **and** real maps (e.g. Metropolis, 118 objects), 0 page-errors.
+
+Two honest caveats. (1) The per-entity physics uses x87 80-bit (`float10`) intermediates in the
+original; WebAssembly has only f32/f64, so a reconstruction is **internally consistent (web-only)**,
+not bit-identical to 2005 clients — which no longer exist to play against anyway. (2) The one piece
+**not** reconstructed is the authoritative **input → acceleration** transfer: the client reads its
+position from networked state (type-0) rather than computing it from input, so that lives server-side
+with no offline ground truth. Damage/hit *scoring* is likewise server-authoritative (the client only
+applies type-14 HP). Nothing here is presented as verified that isn't.
 
 ## Build the engine (Emscripten)
 
@@ -96,6 +115,8 @@ primitives with no toolchain at all.
 run.py            one-shot: decode your install, serve web/ + /game/, open the hub
 web/              home hub + viewers, and web/engine/ (the compiled WASM/WebGL engine page)
 port/src/         reconstructed C: cipher, net codec, RNG, .shp/.bfd/PTX/skeleton/.ape decoders
+port/sim/         reconstructed per-tick simulation layers (+ native-cc tests): projectiles,
+                  collision broad/narrow phase, effects/debris, props, pickups, input
 port/engine/      the Emscripten engine (axis_engine.c) + build_engine.sh
 port/wasm/        no-toolchain WASM build + verifiers (build_wasm.js, verify_emcc.js)
 server/relay.js   zero-dependency WebSocket relay (the §4 packet model)
