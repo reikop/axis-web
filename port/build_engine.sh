@@ -18,11 +18,11 @@ if ! command -v emcc >/dev/null 2>&1; then
   echo "emcc not found (see build.sh header for the WSL setup)."; exit 1
 fi
 
-emcc engine/axis_engine.c src/axis_shp.c \
+emcc engine/axis_engine.c src/axis_shp.c src/axis_ptx.c \
   -O2 -ffp-contract=off \
   -s FULL_ES2=1 -s MIN_WEBGL_VERSION=1 -s MAX_WEBGL_VERSION=1 \
   -s MODULARIZE=1 -s EXPORT_NAME=AxisEngine \
-  -s EXPORTED_FUNCTIONS='["_main","_engine_alloc","_engine_free","_engine_load_mesh","_engine_load_map"]' \
+  -s EXPORTED_FUNCTIONS='["_main","_engine_alloc","_engine_free","_engine_load_mesh","_engine_load_map","_engine_set_texture"]' \
   -s EXPORTED_RUNTIME_METHODS='["ccall","HEAPU8"]' \
   -s INITIAL_MEMORY=134217728 -s ALLOW_MEMORY_GROWTH=1 \
   -s ENVIRONMENT=web \

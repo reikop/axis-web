@@ -19,13 +19,16 @@
 #include <emscripten/html5.h>
 #include <GLES2/gl2.h>
 
-/* from src/axis_shp.c (linked in) */
+/* from src/axis_shp.c / src/axis_ptx.c (linked in) */
 int axis_shp_parse(const uint8_t *buf, uint32_t off, uint32_t end,
                    float *posOut, float *nrmOut, float *uvOut,
                    uint32_t *triOut, uint32_t *grpOut, uint32_t *counts);
+int axis_ptx_decode(const uint8_t *ptx, uint32_t ptxLen, const uint8_t *exe, uint32_t exeLen,
+                    uint8_t *rgbaOut, uint32_t *wh);
 
-static GLuint prog, vboPos, vboNrm, ibo;
-static int indexCount = 0;
+static GLuint prog, vboPos, vboNrm, vboUV, ibo, texId;
+static int indexCount = 0, hasUV = 0, hasTex = 0;
+static uint8_t RGBABUF[1024 * 1024 * 4];   /* decoded texture scratch */
 static float gCenter[3] = {0, 0, 0}, gRadius = 1.0f;
 
 /* free-fly / first-person camera */
@@ -81,12 +84,16 @@ static int norm_name(const uint8_t *s, int max, uint8_t *out) {
 }
 
 static const char *VS =
-    "attribute vec3 aPos; attribute vec3 aNrm; uniform mat4 uMVP; uniform mat4 uModel;"
-    "varying vec3 vN; void main(){ vN = mat3(uModel)*aNrm; gl_Position = uMVP*vec4(aPos,1.0); }";
+    "attribute vec3 aPos; attribute vec3 aNrm; attribute vec2 aUV;"
+    "uniform mat4 uMVP; uniform mat4 uModel; varying vec3 vN; varying vec2 vUV;"
+    "void main(){ vN = mat3(uModel)*aNrm; vUV = aUV; gl_Position = uMVP*vec4(aPos,1.0); }";
 static const char *FS =
-    "precision mediump float; varying vec3 vN;"
+    "precision mediump float; varying vec3 vN; varying vec2 vUV;"
+    "uniform sampler2D uTex; uniform int uHasTex;"
     "void main(){ vec3 n=normalize(vN); float d=max(dot(n,normalize(vec3(0.4,0.8,0.6))),0.0);"
-    "vec3 c=vec3(0.30,0.55,0.85)*(0.35+0.65*d); gl_FragColor=vec4(c,1.0); }";
+    "float l=0.45+0.55*d;"
+    "vec3 c = (uHasTex==1) ? texture2D(uTex, vUV).rgb*l : vec3(0.30,0.55,0.85)*l;"
+    "gl_FragColor=vec4(c,1.0); }";
 
 static GLuint compile(GLenum t, const char *src) {
     GLuint s = glCreateShader(t); glShaderSource(s, 1, &src, 0); glCompileShader(s);
@@ -131,10 +138,30 @@ EMSCRIPTEN_KEEPALIVE int engine_load_mesh(const uint8_t *dat, uint32_t len, uint
 
     glBindBuffer(GL_ARRAY_BUFFER, vboPos); glBufferData(GL_ARRAY_BUFFER, vc*3*sizeof(float), POS, GL_STATIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, vboNrm); glBufferData(GL_ARRAY_BUFFER, vc*3*sizeof(float), NRM, GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, vboUV);  glBufferData(GL_ARRAY_BUFFER, vc*2*sizeof(float), UVt, GL_STATIC_DRAW);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo); glBufferData(GL_ELEMENT_ARRAY_BUFFER, tc*3*sizeof(uint32_t), TRI, GL_STATIC_DRAW);
     indexCount = (int)(tc * 3);
+    hasUV = 1; hasTex = 0;        /* texture set separately via engine_set_texture */
     camInit();
     return (int)CNT[2]; /* group count, as a success signal */
+}
+
+/* Decode a PTX texture blob (the shape's SHAPE\<name> skin, located by the page)
+ * with the verified axis_ptx.c and bind it as the mesh's GL texture. ptxLen==0
+ * clears the texture (flat shading). exe is the user's AXIS.EXE (Huffman tables). */
+EMSCRIPTEN_KEEPALIVE int engine_set_texture(const uint8_t *exe, uint32_t exeLen, const uint8_t *ptx, uint32_t ptxLen) {
+    if (ptxLen == 0) { hasTex = 0; return 0; }
+    uint32_t wh[2];
+    if (axis_ptx_decode(ptx, ptxLen, exe, exeLen, RGBABUF, wh) != 0) { hasTex = 0; return -1; }
+    if (!texId) glGenTextures(1, &texId);
+    glBindTexture(GL_TEXTURE_2D, texId);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, (GLsizei)wh[0], (GLsizei)wh[1], 0, GL_RGBA, GL_UNSIGNED_BYTE, RGBABUF);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    hasTex = 1;
+    return (int)(wh[0] << 16 | wh[1]);
 }
 
 static inline float rf32e(const uint8_t *p) { float v; __builtin_memcpy(&v, p, 4); return v; }
@@ -209,6 +236,7 @@ EMSCRIPTEN_KEEPALIVE int engine_load_map(const uint8_t *dat, uint32_t datLen, ui
     glBindBuffer(GL_ARRAY_BUFFER, vboNrm); glBufferData(GL_ARRAY_BUFFER, mergedV*3*sizeof(float), NRM, GL_STATIC_DRAW);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo); glBufferData(GL_ELEMENT_ARRAY_BUFFER, mergedT*3*sizeof(uint32_t), TRI, GL_STATIC_DRAW);
     indexCount = (int)(mergedT * 3);
+    hasUV = 0; hasTex = 0;        /* map mode: flat shading (per-object skins are a follow-up) */
     camInit();
     return placed;
 }
@@ -264,9 +292,15 @@ static void frame(void) {
         glUseProgram(prog);
         glUniformMatrix4fv(glGetUniformLocation(prog, "uMVP"), 1, GL_FALSE, mvp);
         glUniformMatrix4fv(glGetUniformLocation(prog, "uModel"), 1, GL_FALSE, ident);
-        GLint aPos = glGetAttribLocation(prog, "aPos"), aNrm = glGetAttribLocation(prog, "aNrm");
+        GLint aPos = glGetAttribLocation(prog, "aPos"), aNrm = glGetAttribLocation(prog, "aNrm"), aUV = glGetAttribLocation(prog, "aUV");
         glBindBuffer(GL_ARRAY_BUFFER, vboPos); glEnableVertexAttribArray(aPos); glVertexAttribPointer(aPos, 3, GL_FLOAT, GL_FALSE, 0, 0);
         glBindBuffer(GL_ARRAY_BUFFER, vboNrm); glEnableVertexAttribArray(aNrm); glVertexAttribPointer(aNrm, 3, GL_FLOAT, GL_FALSE, 0, 0);
+        if (aUV >= 0) {
+            if (hasUV) { glBindBuffer(GL_ARRAY_BUFFER, vboUV); glEnableVertexAttribArray(aUV); glVertexAttribPointer(aUV, 2, GL_FLOAT, GL_FALSE, 0, 0); }
+            else glDisableVertexAttribArray(aUV);
+        }
+        glUniform1i(glGetUniformLocation(prog, "uHasTex"), hasTex ? 1 : 0);
+        if (hasTex) { glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texId); glUniform1i(glGetUniformLocation(prog, "uTex"), 0); }
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
         glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
     }
@@ -299,7 +333,7 @@ int main(void) {
     glAttachShader(prog, compile(GL_VERTEX_SHADER, VS));
     glAttachShader(prog, compile(GL_FRAGMENT_SHADER, FS));
     glLinkProgram(prog);
-    glGenBuffers(1, &vboPos); glGenBuffers(1, &vboNrm); glGenBuffers(1, &ibo);
+    glGenBuffers(1, &vboPos); glGenBuffers(1, &vboNrm); glGenBuffers(1, &vboUV); glGenBuffers(1, &ibo);
     emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, 0, 1, onKey);
     emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, 0, 1, onKey);
     emscripten_set_main_loop(frame, 0, 1);

@@ -23,6 +23,7 @@
   <canvas id="canvas" width="720" height="480"></canvas>
   <div id="status">loading WASM…</div>
 </div>
+<script src="/shp.js"></script>
 <script src="axis_engine.js"></script>
 <script>
   const statusEl = document.getElementById('status');
@@ -55,9 +56,34 @@
         const sp = toWasm(M, shape);
         const groups = M.ccall('engine_load_mesh', 'number', ['number', 'number', 'number'], [sp, shape.length, idx]);
         M.ccall('engine_free', null, ['number'], [sp]);
-        statusEl.textContent = groups >= 0
-          ? `rendering Shape.dat record #${idx} — ${groups} group(s). WASM backend, WebGL. (?i=N for meshes, ?map=NAME for maps)`
-          : `engine_load_mesh failed (code ${groups}) for record #${idx}`;
+        if (groups < 0) { statusEl.textContent = `engine_load_mesh failed (code ${groups}) for record #${idx}`; return; }
+        // find and apply the shape's own SHAPE\<name> skin, decoded by axis_ptx.c in WASM
+        let texMsg = 'flat (no SHAPE skin)', shapeName = '#' + idx;
+        try {
+          const sab = shape.buffer.slice(shape.byteOffset, shape.byteOffset + shape.byteLength);
+          const toc = window.AXISShape.readTOC(sab);
+          const name = toc[idx] && toc[idx].name; if (name) shapeName = name;
+          const want = name ? ('SHAPE\\' + name).toUpperCase() : null;
+          if (want) {
+            const exe = await fetchU8('/game/AXIS.EXE');
+            let ptx = null;
+            for (let n = 0; n < 6 && !ptx; n++) {
+              let img; try { img = await fetchU8('/game/Data/Image' + n + '.dat'); } catch (_) { continue; }
+              const iab = img.buffer.slice(img.byteOffset, img.byteOffset + img.byteLength);
+              const e = window.AXISShape.readTOC(iab).find(t => t.name.toUpperCase() === want);
+              if (e) ptx = img.subarray(e.off, e.end);
+            }
+            const ep = toWasm(M, exe);
+            if (ptx) {
+              const pp = toWasm(M, ptx);
+              const r = M.ccall('engine_set_texture', 'number', ['number', 'number', 'number', 'number'], [ep, exe.length, pp, ptx.length]);
+              M.ccall('engine_free', null, ['number'], [pp]);
+              texMsg = r >= 0 ? `textured with ${want} (${r >> 16}×${r & 0xffff}), decoded by axis_ptx.c` : `texture decode failed (code ${r})`;
+            }
+            M.ccall('engine_free', null, ['number'], [ep]);
+          }
+        } catch (e) { texMsg = 'texture step skipped: ' + e.message; }
+        statusEl.textContent = `rendering Shape.dat record #${idx} (${shapeName}) — ${groups} group(s), ${texMsg}. WASM+WebGL. (?i=N, ?map=NAME)`;
       }
       // self-test: ?walk dispatches a REAL held keydown('w') so the emscripten
       // window key-callback -> keyDown[] -> frame() movement path is exercised
