@@ -54,7 +54,7 @@ async function main() {
   const F = n => ex[n] || ex['_' + n];
   const decrypt = F('axis_decrypt'), encrypt = F('axis_encrypt'),
         decodeState = F('axis_decode_state'), encodeState = F('axis_encode_state'),
-        rngFill = F('axis_rng_fill'), shpParse = F('axis_shp_parse'), bfdExtract = F('axis_bfd_extract'),
+        rngFill = F('axis_rng_fill'), rngDraw = F('axis_rng_draw'), shpParse = F('axis_shp_parse'), bfdExtract = F('axis_bfd_extract'),
         ptxDecode = F('axis_ptx_decode'), skelParse = F('axis_skel_parse'), apeParse = F('axis_ape_parse');
   for (const [n, f] of [['axis_decrypt', decrypt], ['axis_encrypt', encrypt], ['axis_decode_state', decodeState], ['axis_encode_state', encodeState], ['axis_rng_fill', rngFill]])
     if (typeof f !== 'function') { console.error('missing export', n); process.exit(1); }
@@ -162,6 +162,40 @@ async function main() {
       let fp = 0; for (let i = 0; i < 4096; i++) if (pool[i] === file[i]) fp++;
       console.log(`rng-fill vs MATHFUNC.TBL: ${fp}/4096 match shipped game pool`);
       if (fp !== 4096) fails++;
+    }
+
+    // ---- axis_rng_draw: the lockstep draw primitive, reproduced on a REAL match.
+    // A type-1 packet's RNG fields are two successive pool draws (SPEC §4,
+    // FUN_0048d080): [44]=pool[idx]%100000, [50]=pool[idx+1]%100000. Recover each
+    // packet's idx from the pool and check the WASM draw reproduces [44]/[50].
+    if (typeof rngDraw === 'function') {
+      let AP2; try { AP2 = require(path.join(__dirname, '..', '..', 'web', 'ape.js')); } catch (e) { AP2 = null; }
+      const ape = path.join(game, 'AutoPlay', 'Test.ape');
+      if (AP2 && fs.existsSync(ape)) {
+        const pairIdx = new Map();
+        for (let i = 0; i < 4096; i++) { const k = pool[i] * 100000 + pool[(i + 1) & 0xfff]; if (!pairIdx.has(k)) pairIdx.set(k, i); }
+        const raw = fs.readFileSync(ape);
+        const u8 = AP2.decrypt(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength));
+        const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+        let start = -1;
+        for (let o = 0; o < Math.min(u8.length, 4096) && start < 0; o++) { let ok = true; for (let k = 0; k < 3; k++) { const b = o + k * 76; if (b + 76 > u8.length || dv.getUint32(b + 8, true) !== 0x40) { ok = false; break; } } if (ok) start = o; }
+        const IDX = RB + 4096 * 4;                 // scratch u32 for the draw index
+        const idxV = new Uint32Array(memory.buffer, IDX, 1);
+        let drew = 0, okd = 0;
+        for (let o = start; o >= 0 && o + 76 <= u8.length; o += 76) {
+          if (dv.getUint32(o + 8, true) !== 0x40) break;
+          const p = o + 12; if (u8[p + 1] !== 1) continue;
+          const v44 = dv.getUint16(p + 44, true), v50 = dv.getUint16(p + 50, true);
+          if ((v44 === 0 && v50 === 0) || v44 >= 100000 || v50 >= 100000) continue;
+          const i0 = pairIdx.get(v44 * 100000 + v50); if (i0 === undefined) continue;
+          drew++;
+          idxV[0] = i0;
+          const d1 = rngDraw(RB, IDX, 100000), d2 = rngDraw(RB, IDX, 100000);
+          if (d1 === v44 && d2 === v50 && idxV[0] === ((i0 + 2) & 0xffffffff)) okd++;
+        }
+        console.log(`rng-draw (WASM) on Test.ape: ${okd}/${drew} type-1 packets' [44]/[50] reproduced by the pool draw`);
+        if (drew === 0 || okd !== drew) fails++;
+      }
     }
   }
 

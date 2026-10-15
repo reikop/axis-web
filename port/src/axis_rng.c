@@ -32,3 +32,21 @@ void axis_rng_fill(uint32_t *pool) {
         pool[i] = (seed >> 16) & 0x7fff;
     }
 }
+
+/* One shared-pool draw, advancing the shared index: `pool[idx++ & 0xfff] % n`
+ * (n == 0 returns the raw value). This is the exact consumption the game uses
+ * everywhere its lockstep decisions are made — `pool[DAT_00a20488++ & 0xfff] % N`
+ * in the per-tick sim and the packet builders (e.g. FUN_0048d080). It is the
+ * operational core of the determinism: two peers starting at the same index and
+ * drawing in the same order get identical spawns / rolls.
+ *
+ * VERIFIED against real recorded play: a type-1 packet's RNG fields are two
+ * successive `axis_rng_draw(pool,&idx,100000)` values of this pool — matched
+ * 247/247 on Test.ape by tools/verify_rng.js, and re-checked here in
+ * port/wasm/verify_emcc.js by reproducing those packets' [44]/[50] from the WASM
+ * draw at each packet's recovered index. */
+EXPORT
+uint32_t axis_rng_draw(const uint32_t *pool, uint32_t *idx, uint32_t n) {
+    uint32_t v = pool[(*idx)++ & 0xfffu];
+    return n ? (v % n) : v;
+}
