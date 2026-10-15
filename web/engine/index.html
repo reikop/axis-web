@@ -141,7 +141,7 @@
         if (placed >= 0 && qs.has('mp')) startMultiplayer(M, qs.get('mp'));
         if (placed >= 0 && qs.has('proj')) {           // ?proj -> run the reconstructed projectile sim in-engine
           M.ccall('engine_proj_demo', null, [], []);
-          statusEl.textContent += ' · sim live: homing projectiles collide with map geometry, spawn gravity debris, and open a proximity gate (reconstructed port/sim: axis_proj + axis_broadphase + axis_collide + axis_effect + axis_prop, all in WASM)';
+          statusEl.textContent += ' · sim live: homing projectiles collide with map geometry, spawn gravity debris, open a proximity gate, and collect pickups (reconstructed port/sim: axis_proj + axis_broadphase + axis_collide + axis_effect + axis_prop + axis_pickup, all in WASM)';
         }
       } else {
         statusEl.textContent = 'fetching Data/Shape.dat …';

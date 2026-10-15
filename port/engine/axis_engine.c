@@ -76,6 +76,13 @@ int   axis_prop_inside(float dist2, int rangeSteps);
 float axis_prop_nearest_dist2(const float *propPos, const float *actors, const int *active, int n);
 static float gPropPos[3] = {0,0,0}, gPropPhase = 0.0f, gPropRate = 0.0f;
 static int gPropRange = 0;
+
+/* the verified item-pickup layer (axis_pickup.c): collectible items a projectile
+ * (acting as the collecting actor) picks up when it passes within range. */
+int axis_pickup_in_range(const float *itemPos, const float *actorPos, float itemRadius);
+#define MAXITEMS 12
+static float gItemPos[MAXITEMS*3];
+static int gItemAlive[MAXITEMS], gItemN = 0, gPickupCount = 0;
 static unsigned gDbgSeed = 1u;   /* cheap deterministic spread for debris velocities */
 static float dbg_rand(void) { gDbgSeed = gDbgSeed * 1103515245u + 12345u; return (float)((gDbgSeed >> 16) & 0x7fff) / 32767.0f; }
 
@@ -295,6 +302,15 @@ EMSCRIPTEN_KEEPALIVE void engine_proj_demo(void) {
     gPropPos[0] = gCenter[0] + R * 1.25f; gPropPos[1] = gCenter[1]; gPropPos[2] = gCenter[2];
     gPropPhase = 0.0f; gPropRate = 0.0f;
     gPropRange = (int)(gRadius * 0.004f); if (gPropRange < 1) gPropRange = 1;  /* radius = range*100 */
+    /* collectible items in a ring between centre and the targets (axis_pickup) */
+    gItemN = MAXITEMS; gPickupCount = 0;
+    for (int i = 0; i < MAXITEMS; i++) {
+        float a = 6.2831853f * (float)i / MAXITEMS + 0.3f;
+        gItemPos[i*3+0] = gCenter[0] + cosf(a) * R * 0.8f;
+        gItemPos[i*3+1] = gCenter[1];
+        gItemPos[i*3+2] = gCenter[2] + sinf(a) * R * 0.8f;
+        gItemAlive[i] = 1;
+    }
     projDemo = 1;
 }
 
@@ -539,6 +555,21 @@ static void frame(void) {
                 int cb; gPropRate = axis_prop_inside(d2, gPropRange) ? 2.0f : -2.0f;
                 gPropPhase = axis_anim_phase_step(gPropPhase, &gPropRate, 1 /*CLAMP*/, sdt, 0, &cb);
             }
+            /* item pickups (verified axis_pickup layer): a live projectile acting
+               as the collecting actor consumes any item it passes within range of */
+            {
+                float ir = gRadius * 0.04f;   /* item radius; reach = ir*1.5 */
+                for (int k = 0; k < gItemN; k++) {
+                    if (!gItemAlive[k]) continue;
+                    for (int i = 0; i < gProjN; i++) {
+                        if (!gProjAlive[i]) continue;
+                        if (axis_pickup_in_range(&gItemPos[k*3], gProjs[i].pos, ir)) {
+                            gItemAlive[k] = 0; gPickupCount++;
+                            break;
+                        }
+                    }
+                }
+            }
             int anyLive = 0; for (int i = 0; i < gProjN; i++) if (gProjAlive[i]) anyLive = 1;
             if (!anyLive) engine_proj_demo();                /* loop the demo */
             if (aUV >= 0) glDisableVertexAttribArray(aUV);
@@ -585,6 +616,18 @@ static void frame(void) {
                 float mv[16]; mat_mul(mv, mvp, m);
                 glUniformMatrix4fv(uM, 1, GL_FALSE, mv); glUniformMatrix4fv(uMo, 1, GL_FALSE, m);
                 glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
+            }
+            {   /* collectible items: cyan cubes that vanish when a projectile collects them */
+                float si = gRadius * 0.03f;
+                for (int k = 0; k < gItemN; k++) {
+                    if (!gItemAlive[k]) continue;
+                    glUniform3f(glGetUniformLocation(prog, "uColor"), 0.2f, 0.85f, 0.95f);
+                    float *p = &gItemPos[k*3];
+                    float m[16] = { si,0,0,0, 0,si,0,0, 0,0,si,0, p[0], p[1], p[2], 1 };
+                    float mv[16]; mat_mul(mv, mvp, m);
+                    glUniformMatrix4fv(uM, 1, GL_FALSE, mv); glUniformMatrix4fv(uMo, 1, GL_FALSE, m);
+                    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
+                }
             }
         }
     }
