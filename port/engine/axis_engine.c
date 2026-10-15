@@ -83,6 +83,15 @@ int axis_pickup_in_range(const float *itemPos, const float *actorPos, float item
 #define MAXITEMS 12
 static float gItemPos[MAXITEMS*3];
 static int gItemAlive[MAXITEMS], gItemN = 0, gPickupCount = 0;
+
+/* the verified client input layer (axis_input.c): the engine's key edges feed
+ * 16 action channels; channel 0 ("fire", bound to F) is built into an
+ * edge-triggered press mask each frame and flashes a marker above the gate. */
+void axis_input_build_masks(const int *enabled, int *pressLatch, int *releaseLatch, int n,
+                            uint32_t *pressMask, uint32_t *releaseMask);
+int axis_input_mask_has(uint32_t mask, int ch);
+static int gActEnabled[16] = {1}, gActPress[16] = {0}, gActRel[16] = {0};
+static float gFireMarkerTtl = 0.0f;
 static unsigned gDbgSeed = 1u;   /* cheap deterministic spread for debris velocities */
 static float dbg_rand(void) { gDbgSeed = gDbgSeed * 1103515245u + 12345u; return (float)((gDbgSeed >> 16) & 0x7fff) / 32767.0f; }
 
@@ -570,6 +579,15 @@ static void frame(void) {
                     }
                 }
             }
+            /* client input (verified axis_input layer): build the edge-triggered
+               action mask from the key latches; a fire (channel 0) press flashes
+               a marker above the gate */
+            {
+                uint32_t pm, rm;
+                axis_input_build_masks(gActEnabled, gActPress, gActRel, 16, &pm, &rm);
+                if (axis_input_mask_has(pm, 0)) gFireMarkerTtl = 1.0f;
+                if (gFireMarkerTtl > 0.0f) gFireMarkerTtl -= sdt;
+            }
             int anyLive = 0; for (int i = 0; i < gProjN; i++) if (gProjAlive[i]) anyLive = 1;
             if (!anyLive) engine_proj_demo();                /* loop the demo */
             if (aUV >= 0) glDisableVertexAttribArray(aUV);
@@ -629,6 +647,15 @@ static void frame(void) {
                     glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
                 }
             }
+            if (gFireMarkerTtl > 0.0f) {   /* fire-action marker (axis_input): magenta cube high above the gate */
+                float sm = gRadius * 0.08f;
+                glUniform3f(glGetUniformLocation(prog, "uColor"), 0.95f, 0.15f, 0.9f);
+                float m[16] = { sm,0,0,0, 0,sm,0,0, 0,0,sm,0,
+                                gPropPos[0], gPropPos[1] + gRadius * 1.3f, gPropPos[2], 1 };
+                float mv[16]; mat_mul(mv, mvp, m);
+                glUniformMatrix4fv(uM, 1, GL_FALSE, mv); glUniformMatrix4fv(uMo, 1, GL_FALSE, m);
+                glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
+            }
         }
     }
 }
@@ -659,6 +686,11 @@ static EM_BOOL onKey(int type, const EmscriptenKeyboardEvent *e, void *u) {
     else if (!__builtin_strcmp(k, "ArrowDown")) code = 40;
     else if (!__builtin_strcmp(k, "Shift")) code = 16;
     else if (!__builtin_strcmp(k, " ")) code = ' ';
+    if (code == 'F') {                       /* fire action -> channel 0 (edge-latched) */
+        int now = (type == EMSCRIPTEN_EVENT_KEYDOWN) ? 1 : 0, prev = keyDown[code];
+        if (now && !prev) gActPress[0] = 1;
+        else if (!now && prev) gActRel[0] = 1;
+    }
     if (code >= 0 && code < 320) keyDown[code] = (type == EMSCRIPTEN_EVENT_KEYDOWN) ? 1 : 0;
     return EM_TRUE;
 }
