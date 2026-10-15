@@ -464,12 +464,27 @@ static void frame(void) {
         float r[3] = {f[1]*wup[2]-f[2]*wup[1], f[2]*wup[0]-f[0]*wup[2], f[0]*wup[1]-f[1]*wup[0]};
         float rl = sqrtf(r[0]*r[0]+r[1]*r[1]+r[2]*r[2]); if (rl<1e-6f) rl=1e-6f; r[0]/=rl; r[1]/=rl; r[2]/=rl;
         float v = camSpeed * dt * ((keyDown[16]) ? 3.0f : 1.0f);   /* Shift = sprint */
-        if (keyDown['W']) { camPos[0]+=f[0]*v; camPos[1]+=f[1]*v; camPos[2]+=f[2]*v; }
-        if (keyDown['S']) { camPos[0]-=f[0]*v; camPos[1]-=f[1]*v; camPos[2]-=f[2]*v; }
-        if (keyDown['D']) { camPos[0]+=r[0]*v; camPos[1]+=r[1]*v; camPos[2]+=r[2]*v; }
-        if (keyDown['A']) { camPos[0]-=r[0]*v; camPos[1]-=r[1]*v; camPos[2]-=r[2]*v; }
-        if (keyDown['E'] || keyDown[' ']) camPos[1]+=v;
-        if (keyDown['Q']) camPos[1]-=v;
+        float d[3] = {0,0,0};
+        if (keyDown['W']) { d[0]+=f[0]*v; d[1]+=f[1]*v; d[2]+=f[2]*v; }
+        if (keyDown['S']) { d[0]-=f[0]*v; d[1]-=f[1]*v; d[2]-=f[2]*v; }
+        if (keyDown['D']) { d[0]+=r[0]*v; d[1]+=r[1]*v; d[2]+=r[2]*v; }
+        if (keyDown['A']) { d[0]-=r[0]*v; d[1]-=r[1]*v; d[2]-=r[2]*v; }
+        if (keyDown['E'] || keyDown[' ']) d[1]+=v;
+        if (keyDown['Q']) d[1]-=v;
+        /* resolve walking against the real map geometry via the reconstructed
+           broad+narrow collision (proj_hit_map): slide per axis so a wall blocks
+           only the component into it and you can't walk through buildings */
+        if (mapMode && indexCount > 0) {
+            float margin = gRadius * 0.03f, hp[3];
+            for (int k = 0; k < 3; k++) {
+                if (d[k] == 0.0f) continue;
+                float to[3] = { camPos[0], camPos[1], camPos[2] };
+                to[k] += d[k] + (d[k] > 0.0f ? margin : -margin);
+                if (!proj_hit_map(camPos, to, hp)) camPos[k] += d[k];   /* free step, else blocked */
+            }
+        } else {
+            camPos[0]+=d[0]; camPos[1]+=d[1]; camPos[2]+=d[2];
+        }
     }
     int w, h; emscripten_get_canvas_element_size("#canvas", &w, &h);
     glViewport(0, 0, w, h);
