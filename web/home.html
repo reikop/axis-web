@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AXIS Web Reconstruction</title>
+<style>
+  :root{ --bg:#0c111b; --panel:#141c2b; --panel2:#1a2435; --line:#263349;
+    --fg:#e8eef7; --muted:#8aa0bd; --accent:#38d0c8; --accent2:#f2b24c; --ok:#58d28b;
+    --mono:ui-monospace,"Cascadia Code",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif; color-scheme:dark; }
+  @media (prefers-color-scheme:light){ :root{ --bg:#eef2f7;--panel:#fff;--panel2:#f4f7fb;
+    --line:#d6deea;--fg:#172031;--muted:#5b6b85;--accent:#0e8f88;--accent2:#b9790e;--ok:#1f9d57; color-scheme:light; } }
+  *{box-sizing:border-box} html,body{height:100%}
+  body{margin:0;background:
+      radial-gradient(1200px 600px at 70% -10%, color-mix(in srgb,var(--accent) 12%,transparent), transparent 60%),
+      var(--bg);color:var(--fg);font:15px/1.6 var(--sans);
+    padding:0 max(16px,env(safe-area-inset-left)) 60px max(16px,env(safe-area-inset-right))}
+  .wrap{max-width:1000px;margin:0 auto}
+  header{padding:48px 0 24px}
+  .eyebrow{font:600 12px/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--accent)}
+  h1{font:700 clamp(30px,6vw,46px)/1.05 var(--sans);margin:12px 0 10px;letter-spacing:-.5px;text-wrap:balance}
+  h1 span{color:var(--accent)}
+  .lede{color:var(--muted);max-width:62ch;font-size:16px}
+  .tools{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:30px 0}
+  a.tool{display:flex;flex-direction:column;gap:6px;background:var(--panel);border:1px solid var(--line);
+    border-radius:13px;padding:18px;text-decoration:none;color:inherit;transition:border-color .15s,transform .15s}
+  a.tool:hover{border-color:var(--accent);transform:translateY(-2px)}
+  a.tool .t{font:600 16px/1.2 var(--sans)} a.tool .t .ar{color:var(--accent)}
+  a.tool .d{color:var(--muted);font-size:13px}
+  a.tool .m{margin-top:4px;font:11px/1 var(--mono);color:var(--accent2)}
+  section{margin:34px 0}
+  h2{font:600 13px/1 var(--sans);text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin:0 0 14px}
+  .fmts{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+  .fmt{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:11px 13px;
+    display:flex;align-items:center;gap:10px;font-size:13px}
+  .fmt .dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--ok)}
+  .fmt .dot.wip{background:var(--accent2)}
+  .fmt b{font-weight:600} .fmt small{color:var(--muted);display:block;font:11px/1.3 var(--mono)}
+  .note{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent2);
+    border-radius:10px;padding:14px 16px;color:var(--muted);font-size:14px;max-width:70ch}
+  .note b{color:var(--fg)}
+  footer{color:var(--muted);font:12px/1.6 var(--mono);border-top:1px solid var(--line);padding-top:18px;margin-top:30px}
+  code{background:var(--panel2);padding:2px 6px;border-radius:5px;font:12px/1 var(--mono)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Reverse-engineered · runs in your browser</div>
+    <h1>AXIS <span>Web Reconstruction</span></h1>
+    <p class="lede">A browser rebuild of the 2005 OpenGL action game <b>AXIS</b>, decoded
+      directly from a legally-owned copy. Every file format — archives, maps, 3D meshes and
+      textures — has been reverse-engineered and renders here from your own game data.</p>
+  </header>
+
+  <div class="tools">
+    <a class="tool" href="map.html"><div class="t">3D Map Viewer <span class="ar">→</span></div>
+      <div class="d">Walk through the real game maps, built from their actual Shape.dat meshes.</div>
+      <div class="m">40 maps · WASD to move</div></a>
+    <a class="tool" href="shape.html"><div class="t">Mesh Viewer <span class="ar">→</span></div>
+      <div class="d">Inspect any 3D model with flat-shaded, orbitable geometry.</div>
+      <div class="m">1,742 meshes</div></a>
+    <a class="tool" href="textures.html"><div class="t">Texture Gallery <span class="ar">→</span></div>
+      <div class="d">Every surface texture, decoded from the game's custom JPEG codec.</div>
+      <div class="m">~1,800 textures · alpha</div></a>
+    <a class="tool" href="index.html"><div class="t">Archive Explorer <span class="ar">→</span></div>
+      <div class="d">Browse the decrypted data archives entry by entry.</div>
+      <div class="m">11 archives</div></a>
+  </div>
+
+  <section>
+    <h2>Decoded formats</h2>
+    <div class="fmts">
+      <div class="fmt"><span class="dot"></span><div><b>Obfuscation</b><small>rol8(b ^ 0x59, 1)</small></div></div>
+      <div class="fmt"><span class="dot"></span><div><b>Indexed archives</b><small>Shape / Skeleton / Image</small></div></div>
+      <div class="fmt"><span class="dot"></span><div><b>Textures (PTX)</b><small>baseline JPEG</small></div></div>
+      <div class="fmt"><span class="dot"></span><div><b>Meshes (.shp)</b><small>1742/1743 verified</small></div></div>
+      <div class="fmt"><span class="dot"></span><div><b>Map layout (.bfd)</b><small>object placement</small></div></div>
+      <div class="fmt"><span class="dot"></span><div><b>Heightmap terrain</b><small>vertex/normal/UV</small></div></div>
+      <div class="fmt"><span class="dot wip"></span><div><b>Mesh ↔ texture</b><small>needs runtime capture</small></div></div>
+      <div class="fmt"><span class="dot wip"></span><div><b>Animation / net / WASM</b><small>runtime — next phase</small></div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="note"><b>Where this is.</b> The reverse-engineering and asset pipeline are
+      complete: the game's maps, models and textures all render above from your own install.
+      What remains is the interactive runtime — texturing meshes (needs dynamic capture),
+      skeletal animation, combat/item logic, the network protocol &amp; server, and the
+      Emscripten/WASM build — which is a long, separate effort. Full notes live in
+      <code>docs/SPEC.md</code>.</div>
+  </section>
+
+  <footer>
+    Built by reverse-engineering · no original assets are redistributed — you supply your own
+    copy of AXIS. Generated locally by <code>python run.py</code>.
+  </footer>
+</div>
+</body>
+</html>

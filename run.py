@@ -90,7 +90,7 @@ def main():
     handler = http.server.SimpleHTTPRequestHandler
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("127.0.0.1", port), handler) as httpd:
-        url = f"http://127.0.0.1:{port}/"
+        url = f"http://127.0.0.1:{port}/home.html"
         print(f"serving  : {url}  (Ctrl+C to stop)")
         try:
             webbrowser.open(url)
