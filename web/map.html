@@ -45,6 +45,7 @@
     <div class="stat" id="stats"></div>
     <label class="rowc"><input type="checkbox" id="meshes" checked> render meshes</label>
     <label class="rowc"><input type="checkbox" id="textures" checked> textures</label>
+    <label class="rowc"><input type="checkbox" id="backdrop" checked> map backdrop</label>
     <label class="rowc"><input type="checkbox" id="wire"> wireframe</label>
     <label class="rowc"><input type="checkbox" id="fpv"> walk inside (first-person)</label>
     <div style="border-top:1px solid var(--line);padding-top:12px;margin-top:2px">
@@ -67,7 +68,8 @@
 const cv=document.getElementById("c"),ctx=cv.getContext("2d"),hud=document.getElementById("hud");
 let DPR=Math.min(devicePixelRatio||1,2);
 let objs=[], instances=[], center=[0,0,0], ext=1000;
-let yaw=0.7, pitch=0.5, dist=2.4, useMesh=true, wire=false, texOn=true;
+let yaw=0.7, pitch=0.5, dist=2.4, useMesh=true, wire=false, texOn=true, bgOn=true;
+let BACKDROP=null;   // the map's real STAGE\<map>\* backdrop texture
 let SHIDX={};                 // lowercase id -> real id (JSON mode)
 const meshCache=new Map();
 const LIVE={on:false, shapeAB:null, byLower:{}};   // in-browser decode straight from game files
@@ -125,7 +127,15 @@ function proj(r){ const d=r[2]+ext*dist; if(d<=1)return null;
 
 function draw(){
   const css=getComputedStyle(document.documentElement);
+  ctx.setTransform(1,0,0,1,0,0);
   ctx.fillStyle=css.getPropertyValue("--bg"); ctx.fillRect(0,0,cv.width,cv.height);
+  // the map's real backdrop art (STAGE\<map>\*), drawn cover-fit behind the scene
+  if(BACKDROP && bgOn){
+    const iw=BACKDROP.width, ih=BACKDROP.height, s=Math.max(cv.width/iw, cv.height/ih);
+    const w=iw*s, h=ih*s; ctx.globalAlpha=0.5;
+    ctx.drawImage(BACKDROP, (cv.width-w)/2, (cv.height-h)/2, w, h);
+    ctx.globalAlpha=1; ctx.fillStyle="rgba(0,0,0,0.25)"; ctx.fillRect(0,0,cv.width,cv.height);
+  }
   if(!objs.length) return;
   // ground grid
   ctx.strokeStyle=css.getPropertyValue("--grid"); ctx.lineWidth=DPR; ctx.globalAlpha=0.45;
@@ -236,6 +246,11 @@ async function loadMap(name){
     const m=window.AXISMap.extractMap(ab); d={map:name,count:m.count,objects:m.objects}; }
   else { d=await (await fetch("maps/"+name+".json")).json(); }
   objs=d.objects||[];
+  // the map's own backdrop art, named after the map (STAGE\<MAP>\<MAP>, else a sky layer)
+  BACKDROP=null;
+  if(LIVE.on && EXE){ const mn=(d.map||name||"").toUpperCase();
+    BACKDROP = texByName("STAGE\\"+mn+"\\"+mn) || texByName("STAGE\\"+mn+"\\SKYOUTERLAYER")
+             || texByName("STAGE\\"+mn+"\\SKYINNERLAYER"); }
   const fams=[...new Set(objs.map(o=>family(o.name)))].sort();
   const fc={}; fams.forEach((f,i)=>fc[f]=hcol(i,fams.length));
   objs.forEach(o=>o.col=fc[family(o.name)]);
@@ -268,6 +283,7 @@ cv.addEventListener("pointerup",()=>drag=null);
 cv.addEventListener("wheel",e=>{e.preventDefault();dist=Math.max(0.6,Math.min(8,dist*(e.deltaY>0?1.1:0.9)));draw();},{passive:false});
 document.getElementById("meshes").addEventListener("change",e=>{useMesh=e.target.checked;draw();});
 document.getElementById("textures").addEventListener("change",e=>{texOn=e.target.checked;draw();});
+document.getElementById("backdrop").addEventListener("change",e=>{bgOn=e.target.checked;draw();});
 document.getElementById("wire").addEventListener("change",e=>{wire=e.target.checked;draw();});
 let orbitDist=2.4;
 document.getElementById("fpv").addEventListener("change",e=>{
