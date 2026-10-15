@@ -29,6 +29,7 @@
 /web/catalog.json
 /web/maps/
 /web/shapes/
+/web/textures/
 *.gltf
 *.glb
 *.png

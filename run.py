@@ -79,6 +79,13 @@ def main():
                          os.path.join(HERE, "tools", "export_shapes.py"),
                          shape_dat, os.path.join(WEB, "shapes")])
 
+    # decode textures (PTX -> PNG) for the gallery
+    if os.path.isfile(os.path.join(game, "AXIS.EXE")):
+        subprocess.call([sys.executable, "-I",
+                         os.path.join(HERE, "tools", "export_textures.py"),
+                         game, os.path.join(WEB, "textures")],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     os.chdir(WEB)
     handler = http.server.SimpleHTTPRequestHandler
     socketserver.TCPServer.allow_reuse_address = True
