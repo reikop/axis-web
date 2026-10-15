@@ -313,6 +313,12 @@ EMSCRIPTEN_KEEPALIVE int engine_impacts(void) { return gImpactCount; }
 /* targets destroyed by player shots (HUD score). */
 EMSCRIPTEN_KEEPALIVE int engine_score(void) { return gScore; }
 
+/* the loaded scene's centre (xyz) and radius, so the page can fit replay tracks
+ * into the arena. Writes 4 floats to out. */
+EMSCRIPTEN_KEEPALIVE void engine_bounds(float *out) {
+    out[0] = gCenter[0]; out[1] = gCenter[1]; out[2] = gCenter[2]; out[3] = gRadius;
+}
+
 /* Decode one Shape.dat record into a dedicated entity-mesh buffer, so the demo
  * can draw its targets as a real AXIS model instead of a cube. Stores the mesh
  * centre/radius so it can be scaled to a consistent on-screen size. */

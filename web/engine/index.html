@@ -44,6 +44,7 @@
 <script src="/shp.js"></script>
 <script src="/bfd.js"></script>
 <script src="/crypt.js"></script>
+<script src="/ape.js"></script>
 <script src="axis_engine.js"></script>
 <script>
   const statusEl = document.getElementById('status');
@@ -112,6 +113,58 @@
     };
     ws.onopen = () => { setInterval(() => { if (ws.readyState === 1 && mySlot >= 0) ws.send(codec.encodeState({ actor: mySlot, x: self.x, y: self.y, z: self.z, yaw: 0 })); }, 120); };
     ws.onerror = () => {};
+  }
+
+  // Replay a recorded 2005 match in the 3D engine: decode an AutoPlay/*.ape with
+  // the verified ape.js decoder and drive the real recorded players as avatars
+  // through the arena (engine_set_avatars), at their recorded world positions.
+  async function startReplay(M, name) {
+    let ab;
+    try { ab = (await fetchU8('/game/AutoPlay/' + name + '.ape')).buffer; }
+    catch (e) { statusEl.textContent = 'replay load failed (run via run.py): ' + e.message; return; }
+    let rep; try { rep = window.AXISReplay.parseReplay(ab); } catch (e) { statusEl.textContent = 'replay decode failed: ' + e.message; return; }
+    const tracks = rep.tracks || {}, names = rep.names || {};
+    const actors = Object.keys(tracks).map(Number).filter(a => tracks[a] && tracks[a].length);
+    if (!actors.length) { statusEl.textContent = 'replay ' + name + ' has no tracks'; return; }
+    let maxTick = 1; for (const a of actors) { const s = tracks[a]; maxTick = Math.max(maxTick, s[s.length - 1][0]); }
+    // fit the recorded tracks into the loaded arena (translate+scale about centre),
+    // preserving the real relative motion but making it visible on this map
+    const lo = [1e30, 1e30, 1e30], hi = [-1e30, -1e30, -1e30];
+    for (const a of actors) for (const s of tracks[a]) for (let k = 0; k < 3; k++) { const v = s[k + 1]; if (v < lo[k]) lo[k] = v; if (v > hi[k]) hi[k] = v; }
+    const rc = [(lo[0]+hi[0])/2, (lo[1]+hi[1])/2, (lo[2]+hi[2])/2];
+    let rr = 1; for (let k = 0; k < 3; k++) rr = Math.max(rr, (hi[k]-lo[k])/2);
+    let mc = rc.slice(), scale = 1;
+    try {
+      const bp = M.ccall('engine_alloc', 'number', ['number'], [16]);
+      M.ccall('engine_bounds', null, ['number'], [bp]);
+      const b = new Float32Array(M.HEAPU8.buffer, bp, 4);
+      mc = [b[0], b[1], b[2]]; scale = (b[3] * 0.7) / rr;
+      M.ccall('engine_free', null, ['number'], [bp]);
+    } catch (_) {}
+    const fit = (x, y, z) => [mc[0] + (x - rc[0]) * scale, mc[1] + (y - rc[1]) * scale, mc[2] + (z - rc[2]) * scale];
+    const AVN = 16, avPtr = M.ccall('engine_alloc', 'number', ['number'], [AVN * 3 * 4]);
+    const TICKHZ = 20, t0 = performance.now();
+    const label = actors.slice(0, AVN).map(a => names[a] || ('P' + a)).join(', ');
+    const sample = (s, tick) => {
+      const hi = s.length - 1;
+      if (tick <= s[0][0]) return [s[0][1], s[0][2], s[0][3]];
+      if (tick >= s[hi][0]) return [s[hi][1], s[hi][2], s[hi][3]];
+      for (let i = 0; i < hi; i++) { const a = s[i], b = s[i + 1]; if (tick >= a[0] && tick <= b[0]) { const f = (b[0] - a[0]) ? (tick - a[0]) / (b[0] - a[0]) : 0; return [a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, a[3] + (b[3] - a[3]) * f]; } }
+      return [s[hi][1], s[hi][2], s[hi][3]];
+    };
+    const hud = document.getElementById('hud'), cross = document.getElementById('cross');
+    if (hud) { hud.style.display = 'block'; hud.innerHTML = `<b>replay ${name}</b> &middot; ${actors.length} players`; }
+    if (cross) cross.style.display = 'none';
+    function frame() {
+      const tick = ((performance.now() - t0) / 1000 * TICKHZ) % maxTick;
+      const f = new Float32Array(M.HEAPU8.buffer, avPtr, AVN * 3);
+      let n = 0;
+      for (const a of actors) { if (n >= AVN) break; const p = sample(tracks[a], tick); const q = fit(p[0], p[1], p[2]); f[n*3]=q[0]; f[n*3+1]=q[1]; f[n*3+2]=q[2]; n++; }
+      M.ccall('engine_set_avatars', null, ['number', 'number'], [avPtr, n]);
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+    statusEl.textContent = `replaying ${name}.ape in 3D — ${actors.length} recorded players (${label}) driven by ape.js-decoded type-0 states over map ${mapName}`;
   }
 
   // No map/mesh selected -> show a start menu (pick a map, see controls, Play),
@@ -227,6 +280,7 @@
           } catch (e) { /* leave map flat on any texture error */ }
         }
         if (placed >= 0 && qs.has('mp')) startMultiplayer(M, qs.get('mp'));
+        if (placed >= 0 && qs.has('replay')) startReplay(M, qs.get('replay'));   // 3D replay of a recorded match
         if (placed >= 0) {                              // walkable: show the HUD + crosshair
           const hud = document.getElementById('hud'), cross = document.getElementById('cross');
           const sim = qs.has('proj');
