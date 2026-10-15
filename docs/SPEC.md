@@ -372,10 +372,30 @@ unit-length (`|axis|≈1.0`), confirming axis-angle. World bind-pose joints:
 
 Tools: `tools/parse_skeleton.py` (parse + export per-rig JSON with precomputed world
 joints), JS port `web/skel.js` (byte-exact, verified by `tools/verify_skel_js.js`),
-viewer `web/skeleton.html` (orbitable bind-pose rig, live from Skeleton.dat). The mesh's
-per-vertex `attr` (4 bytes, §2.8) is the likely bone-index/weight for skinning. Remaining
-for full animation = the per-bone keyframe tracks after the bone array + the `attr` skin
-binding to deform the mesh — the next step for animated models.
+viewer `web/skeleton.html` (orbitable bind-pose rig, live from Skeleton.dat).
+
+**Animation keyframe region (structure decoded, cross-checked; playback semantics open).**
+After the bind-pose bone array (`0x24 + bc*0x70`) each entry carries an animation region.
+Verified against the bind pose used as ground truth (`tools/probe_skeleton_anim.py`):
+
+* header `@0x1c` = **keyframe/sample count** — varies per rig (BAAL-ARM 30, BAAL-LEG 34,
+  BAAL-BODY 6, NITRO-ARM 24); the region size scales with it, so the format is
+  variable-length. `@0x18` = clip/animation count or flags (0,2,4,6…); `@0x20` = const 3300.
+* The region is a ~68-byte header block followed by one **uniform-stride block per bone**
+  (BAAL-ARM: `0x78` = 120 B/bone, confirmed identical across 9 of its 10 bones).
+* Each bone block holds **axis-angle ROTATION keyframes** (angle + unit axis, 4 f32 each);
+  keyframe 0 equals the bind-pose rotation *exactly* (matched on LSHO, LARM01, LARM02,
+  LFIST, RSHO, RARM01, RARM02 — not a guess). The header block carries **root TRANSLATION
+  keyframes** (the root joint's xyz changing frame to frame).
+* int32 markers `1650` and `3300` (= 2×1650) delimit sub-structure (key times / indices).
+
+Still **open** (needs the runtime animation sampler reversed or a dynamic trace to pin down
+without guessing, the same bar as §2.9 texturing): the 1650/3300 time base, the exact
+per-key record stride, the rotation/translation track interleave, and clip boundaries.
+No guessed playback is shipped until these are verified.
+
+The mesh's per-vertex `attr` (4 bytes, §2.8) is the likely bone-index/weight for skinning;
+with verified keyframe playback + that skin binding the meshes can be deformed and animated.
 
 ## 4. Next analysis targets
 
