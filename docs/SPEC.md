@@ -352,7 +352,12 @@ gallery (§2.2) shows the textures standalone.
 3. `.bfd` heightmap-patch byte layout (§2.5) for terrain maps that use it.
 4. `WS2_32` protocol → server → online multiplayer; then the approach-B WASM build.
 3. `WinMain` / entry + main loop; GL draw style (immediate `glBegin` vs. vertex arrays).
-4. `WS2_32` send/recv call sites — multiplayer protocol → server reimplementation.
-5. (optional) full PTX block decoder for a standalone PNG extractor.
+4. **Network (multiplayer)** — `WS2_32` is imported by **ordinal** (so `recv`/`send` don't
+   resolve by name); connection strings in the main EXE: `"iftex/gameconnect"` (`0x4ae56c`),
+   `"%s has been connected."` (`0x4c5608`), `"The network connection lost. The game ends."`
+   (`0x4c58f8`). Much of the socket/server-list logic lives in `Launcher/` (`GetList.exe`,
+   `SocketUpdate/`, `ServerList.dat`). Reversing the packet format + dispatch and
+   reimplementing the server is its own large workstream (→ Node server + WebSocket relay).
+5. (optional) full PTX block decoder for a standalone PNG extractor — done (`tools/ptx_decode.py`).
 
 See `../port/README.md` for how these feed the approach-B WASM build.
