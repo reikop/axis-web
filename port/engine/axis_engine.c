@@ -34,8 +34,8 @@ static uint8_t RGBABUF[1024 * 1024 * 4];   /* decoded texture scratch */
 static GLuint vboCube, vboCubeN, iboCube;
 /* an optional real AXIS mesh used to draw the demo targets as actual game models
  * instead of placeholder cubes (loaded by engine_load_entity_mesh). */
-static GLuint vboEnt, vboEntN, iboEnt;
-static int entTri = 0;
+static GLuint vboEnt, vboEntN, vboEntUV, iboEnt, texEnt;
+static int entTri = 0, entHasTex = 0;
 static float entCenter[3] = {0,0,0}, entRadius = 1.0f;
 #define MAXAV 16
 static float avatars[MAXAV * 3];
@@ -324,12 +324,30 @@ EMSCRIPTEN_KEEPALIVE int engine_load_entity_mesh(const uint8_t *dat, uint32_t le
     for (uint32_t i = 0; i < vc; i++) for (int k = 0; k < 3; k++) { float v = TPOS[i*3+k]; if (v<lo[k]) lo[k]=v; if (v>hi[k]) hi[k]=v; }
     entRadius = 0.0001f;
     for (int k = 0; k < 3; k++) { entCenter[k] = 0.5f*(lo[k]+hi[k]); float h = 0.5f*(hi[k]-lo[k]); if (h > entRadius) entRadius = h; }
-    if (!vboEnt) { glGenBuffers(1,&vboEnt); glGenBuffers(1,&vboEntN); glGenBuffers(1,&iboEnt); }
+    if (!vboEnt) { glGenBuffers(1,&vboEnt); glGenBuffers(1,&vboEntN); glGenBuffers(1,&vboEntUV); glGenBuffers(1,&iboEnt); }
     glBindBuffer(GL_ARRAY_BUFFER, vboEnt);  glBufferData(GL_ARRAY_BUFFER, vc*3*sizeof(float), TPOS, GL_STATIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, vboEntN); glBufferData(GL_ARRAY_BUFFER, vc*3*sizeof(float), TNRM, GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, vboEntUV); glBufferData(GL_ARRAY_BUFFER, vc*2*sizeof(float), TUV, GL_STATIC_DRAW);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, iboEnt); glBufferData(GL_ELEMENT_ARRAY_BUFFER, tc*3*sizeof(uint32_t), TTRI, GL_STATIC_DRAW);
-    entTri = (int)tc;
+    entTri = (int)tc; entHasTex = 0;
     return (int)tc;
+}
+
+/* give the entity mesh its real SHAPE skin: decode the PTX (axis_ptx.c) and bind
+ * it as the entity texture so the demo targets render textured, not flat. */
+EMSCRIPTEN_KEEPALIVE int engine_set_entity_texture(const uint8_t *exe, uint32_t exeLen, const uint8_t *ptx, uint32_t ptxLen) {
+    if (ptxLen == 0) { entHasTex = 0; return 0; }
+    uint32_t wh[2];
+    if (axis_ptx_decode(ptx, ptxLen, exe, exeLen, RGBABUF, wh) != 0) { entHasTex = 0; return -1; }
+    if (!texEnt) glGenTextures(1, &texEnt);
+    glBindTexture(GL_TEXTURE_2D, texEnt);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, (GLsizei)wh[0], (GLsizei)wh[1], 0, GL_RGBA, GL_UNSIGNED_BYTE, RGBABUF);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    entHasTex = 1;
+    return (int)(wh[0] << 16 | wh[1]);
 }
 
 /* Demo: run the reconstructed projectile combat sim in the engine — place a ring
@@ -683,7 +701,15 @@ static void frame(void) {
                 glBindBuffer(GL_ARRAY_BUFFER, vboEnt);  glEnableVertexAttribArray(aPos); glVertexAttribPointer(aPos, 3, GL_FLOAT, GL_FALSE, 0, 0);
                 glBindBuffer(GL_ARRAY_BUFFER, vboEntN); glEnableVertexAttribArray(aNrm); glVertexAttribPointer(aNrm, 3, GL_FLOAT, GL_FALSE, 0, 0);
                 glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, iboEnt);
-                glUniform3f(glGetUniformLocation(prog, "uColor"), 0.95f, 0.8f, 0.3f);
+                int entTexOn = entHasTex && aUV >= 0;
+                if (entTexOn) {                               /* real SHAPE skin */
+                    glBindBuffer(GL_ARRAY_BUFFER, vboEntUV); glEnableVertexAttribArray(aUV); glVertexAttribPointer(aUV, 2, GL_FLOAT, GL_FALSE, 0, 0);
+                    glUniform1i(glGetUniformLocation(prog, "uHasTex"), 1);
+                    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texEnt);
+                    glUniform1i(glGetUniformLocation(prog, "uTex"), 0);
+                } else {
+                    glUniform3f(glGetUniformLocation(prog, "uColor"), 0.95f, 0.8f, 0.3f);
+                }
                 float s = (gRadius * 0.16f) / entRadius;      /* fit the model to a target-sized box */
                 for (int i = 0; i < gTgtN; i++) {
                     float m[16] = { s,0,0,0, 0,s,0,0, 0,0,s,0,
@@ -692,6 +718,7 @@ static void frame(void) {
                     glUniformMatrix4fv(uM, 1, GL_FALSE, mv); glUniformMatrix4fv(uMo, 1, GL_FALSE, m);
                     glDrawElements(GL_TRIANGLES, entTri * 3, GL_UNSIGNED_INT, 0);
                 }
+                if (entTexOn) { glUniform1i(glGetUniformLocation(prog, "uHasTex"), 0); glDisableVertexAttribArray(aUV); }
                 glBindBuffer(GL_ARRAY_BUFFER, vboCube);  glVertexAttribPointer(aPos, 3, GL_FLOAT, GL_FALSE, 0, 0);
                 glBindBuffer(GL_ARRAY_BUFFER, vboCubeN); glVertexAttribPointer(aNrm, 3, GL_FLOAT, GL_FALSE, 0, 0);
                 glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, iboCube);
