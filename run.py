@@ -86,10 +86,25 @@ def main():
                          game, os.path.join(WEB, "textures")],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    os.chdir(WEB)
-    handler = http.server.SimpleHTTPRequestHandler
+    # serve web/ normally, plus /game/<path> from the user's install (read-only, local)
+    # so the browser can decode textures/meshes live from their own game data.
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def translate_path(self, path):
+            p = path.split("?", 1)[0].split("#", 1)[0]
+            if p.startswith("/game/"):
+                rel = p[len("/game/"):].lstrip("/")
+                parts = [x for x in rel.split("/") if x not in ("", ".", "..")]
+                return os.path.join(game, *parts)
+            return super().translate_path(path)
+
+        def log_message(self, *a):
+            pass
+
+        def __init__(self, *a, **k):
+            super().__init__(*a, directory=WEB, **k)
+
     socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("127.0.0.1", port), handler) as httpd:
+    with socketserver.TCPServer(("127.0.0.1", port), Handler) as httpd:
         url = f"http://127.0.0.1:{port}/home.html"
         print(f"serving  : {url}  (Ctrl+C to stop)")
         try:
