@@ -60,6 +60,7 @@
 </div>
 <script src="shp.js"></script>
 <script src="bfd.js"></script>
+<script src="crypt.js"></script>
 <script>
 const cv=document.getElementById("c"),ctx=cv.getContext("2d"),hud=document.getElementById("hud");
 let DPR=Math.min(devicePixelRatio||1,2);
@@ -235,13 +236,16 @@ addEventListener("keydown",e=>{
 });
 
 // --- multiplayer client: connect to the AXIS relay (server/relay.js) ---
-const MP={ws:null,id:-1,players:new Map(),timer:0};
+// Packets are the game's REAL type-0 state format, built/parsed by the WASM
+// state codec (crypt.js: encodeState/decodeState, SPEC §4) — not an ad-hoc layout.
+const MP={ws:null,id:-1,players:new Map(),timer:0,codec:null};
+if(window.AXISCrypt) window.AXISCrypt.load().then(m=>{MP.codec=m; mpStat(`codec: ${m.backend}`);});
+function mpCodec(){ return MP.codec || {encodeState:window.AXISCrypt.jsEncodeState, decodeState:window.AXISCrypt.jsDecodeState}; }
 function mpSendPos(){
   if(!MP.ws||MP.ws.readyState!==1) return;
-  const pkt=new ArrayBuffer(64), dv=new DataView(pkt);
-  dv.setUint8(0,70); dv.setUint8(2,MP.id&0xff);        // opcode + actor (SPEC §4 layout)
-  dv.setFloat32(9,center[0],true); dv.setFloat32(13,center[1],true); dv.setFloat32(17,center[2],true);
-  MP.ws.send(pkt);
+  const yawDeg=((-yaw*180/Math.PI)%360+540)%360-180;   // camera heading -> +/-180
+  const pkt=mpCodec().encodeState({actor:MP.id&0xf, x:center[0], y:center[1], z:center[2], yaw:yawDeg});
+  MP.ws.send(pkt);                                       // 64-byte type-0 payload
 }
 function mpStat(t){document.getElementById("mpstat").innerHTML=t;}
 function mpConnect(){
@@ -256,10 +260,10 @@ function mpConnect(){
   ws.onmessage=(ev)=>{
     const b=new Uint8Array(ev.data);
     if(b.length===2 && b[0]===0xff){ MP.id=b[1]; mpStat(`you are <b style="color:var(--accent)">P${MP.id}</b>`); return; }
-    if(b.length>=5+18){ const dv=new DataView(ev.data);
-      const actor=dv.getUint8(4);
-      const x=dv.getFloat32(5+9,true),y=dv.getFloat32(5+13,true),z=dv.getFloat32(5+17,true);
-      if(Number.isFinite(x)) MP.players.set(actor,{pos:[x,y,z],t:Date.now()});
+    if(b.length>=5+64){                                   // [u32 tick][u8 actor][64B type-0 payload]
+      const actor=b[4];                                    // relay-assigned slot (authoritative)
+      const st=mpCodec().decodeState(b.subarray(5,5+64));  // real AXIS state decode
+      if(Number.isFinite(st.x)) MP.players.set(actor,{pos:[st.x,st.y,st.z],yaw:st.yaw,t:Date.now()});
       const others=MP.players.size;
       mpStat(`you are <b style="color:var(--accent)">P${MP.id}</b> · ${others} other${others===1?"":"s"} in map`);
       draw();
