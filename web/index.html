@@ -103,7 +103,8 @@ function renderCards(){
     b.appendChild(el("div","nm",fn));
     const mt=el("div","mt");
     if(a.indexed){
-      mt.appendChild(el("span",null,a.count+" entries"));
+      mt.appendChild(el("span",null,a.count+" "+(a.encrypted?"names":"entries")));
+      if(a.encrypted) mt.appendChild(el("span",null,"🔓 decrypted"));
       const tex=(a.entries||[]).filter(e=>e.ptx).length;
       if(tex) mt.appendChild(el("span",null,tex+" textures"));
     } else {

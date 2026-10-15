@@ -11,8 +11,40 @@ import sys
 import os
 import json
 import struct
+import re
 
 REC, NAME = 0x44, 0x40
+
+# encrypted data files (see docs/SPEC.md §2.3): rol8(b ^ 0x59, 1) after fread.
+# Sound.dat is encrypted from offset 0; the others keep a 4-byte plaintext version.
+ENCRYPTED = {"item.dat": 4, "component.dat": 4, "sound.dat": 0}
+
+
+def _dec_byte(x):
+    x = (x ^ 0x59) & 0xFF
+    return ((x << 1) | (x >> 7)) & 0xFF
+
+
+def decrypt(buf, skip):
+    return bytes(buf[:skip]) + bytes(_dec_byte(x) for x in buf[skip:])
+
+
+def read_encrypted(path, skip):
+    """Decrypt an obfuscated .dat and return its version, header count, and the
+    distinct asset path names embedded in it (record layout varies per file)."""
+    raw = open(path, "rb").read()
+    plain = decrypt(raw, skip)
+    ver = struct.unpack_from("<I", plain, 0)[0] if skip == 4 else None
+    count = struct.unpack_from("<I", plain, 4)[0] if (skip == 4 and len(plain) >= 8) else None
+    names, seen = [], set()
+    for m in re.finditer(rb"[\x20-\x7e]{4,}", plain):
+        s = m.group().decode("cp949", "replace").strip()
+        if ("\\" in s or "/" in s) and s not in seen:
+            seen.add(s)
+            names.append(s)
+    return {"indexed": True, "encrypted": True, "version": hex(ver) if ver else None,
+            "header_count": count, "file_size": len(raw),
+            "count": len(names), "entries": [{"name": n} for n in names]}
 
 
 def read_toc(path):
@@ -67,14 +99,23 @@ def main():
     data_dir = os.path.join(game, "Data")
     if os.path.isdir(data_dir):
         for fn in sorted(os.listdir(data_dir)):
-            if fn.lower().endswith(".dat"):
-                toc = read_toc(os.path.join(data_dir, fn))
-                size = os.path.getsize(os.path.join(data_dir, fn))
-                if toc:
-                    cat["archives"][fn] = {"indexed": True, "file_size": size, **toc}
-                else:
+            if not fn.lower().endswith(".dat"):
+                continue
+            full = os.path.join(data_dir, fn)
+            size = os.path.getsize(full)
+            if fn.lower() in ENCRYPTED:
+                try:
+                    cat["archives"][fn] = read_encrypted(full, ENCRYPTED[fn.lower()])
+                except Exception as e:
                     cat["archives"][fn] = {"indexed": False, "file_size": size,
-                                           "note": "binary blob (loader not yet reversed)"}
+                                           "note": f"decrypt failed: {e}"}
+                continue
+            toc = read_toc(full)
+            if toc:
+                cat["archives"][fn] = {"indexed": True, "file_size": size, **toc}
+            else:
+                cat["archives"][fn] = {"indexed": False, "file_size": size,
+                                       "note": "binary blob (loader not yet reversed)"}
 
     cat["media"]["maps"] = list_dir(game, "Map", {".bfd"})
     # tag each map with its container version (0x1201 expected)
