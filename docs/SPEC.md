@@ -114,6 +114,25 @@ object records (`block\object\b_upper_3_big`, …), then `PLAYER`, `STAGE/blocks
 component names (`MILLIA\HEAD`). `Item`/`Component` look like the same indexed-archive
 shape as §2.1 but encrypted (exact record size still to confirm on decrypted bytes).
 
+### 2.6 Map object placement  (decrypted `.bfd`, confirmed on all 40 maps)
+
+After the plaintext `u32 version (0x1201)`, the decrypted stream begins with the object
+placement list:
+
+```
+u32  section_size   (== count*0xB0 + 4)       # validates on all 40 shipped maps
+u32  count
+count × 0xB0 (176-byte) object records:
+    +0x00  char[~0x88]  shape path name (NUL-terminated, cp949) — a Shape.dat entry
+    +0x8c  f32[3]       position x, y, z   (confirmed by spatial spread across objects)
+    +...   f32          orientation / scale (not yet identified)
+```
+
+Extractor: `tools/extract_map.py` → JSON; viewer: `web/map.html` (object layout in 3D).
+The meshes referenced by name live in `Shape.dat` (mesh body format still to be decoded),
+so this renders the map's spatial layout, not yet textured geometry. The heightmap-terrain
+path (§2.5) exists in the engine but these arena maps are built from placed objects.
+
 ### 2.4 Map load pipeline  (`FUN_00467bf0`, the loading-screen state machine)
 
 A map is `<name>.bfd`, opened in sequence by several section parsers (submode at

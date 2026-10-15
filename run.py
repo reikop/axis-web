@@ -51,6 +51,27 @@ def main():
     if rc != 0:
         return rc
 
+    # extract every map's object layout for the 3D viewer
+    maps_dir = os.path.join(WEB, "maps")
+    os.makedirs(maps_dir, exist_ok=True)
+    src_maps = os.path.join(game, "Map")
+    index = []
+    if os.path.isdir(src_maps):
+        import json
+        for fn in sorted(os.listdir(src_maps)):
+            if not fn.lower().endswith(".bfd"):
+                continue
+            name = os.path.splitext(fn)[0]
+            subprocess.call([sys.executable, "-I",
+                             os.path.join(HERE, "tools", "extract_map.py"),
+                             os.path.join(src_maps, fn),
+                             os.path.join(maps_dir, name + ".json")],
+                            stdout=subprocess.DEVNULL)
+            index.append(name)
+        with open(os.path.join(maps_dir, "index.json"), "w", encoding="utf-8") as f:
+            json.dump(index, f)
+        print(f"maps     : {len(index)} map layouts -> web/maps/")
+
     os.chdir(WEB)
     handler = http.server.SimpleHTTPRequestHandler
     socketserver.TCPServer.allow_reuse_address = True

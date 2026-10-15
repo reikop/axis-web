@@ -27,6 +27,7 @@
 /out/
 # generated locally from the user's own install (metadata derived from game data)
 /web/catalog.json
+/web/maps/
 *.gltf
 *.glb
 *.png
