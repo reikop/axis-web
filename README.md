@@ -52,7 +52,7 @@ the game's data directory is ever committed (see `.gitignore`: `*.dat`, `*.bfd`,
 | 3. Platform shim | window/loop, keyboard, mouse, audio, networking | ✔ all pillars, 0 page-errors |
 | 4. Network | §4 protocol → `server/relay.js` + WebSocket, real-protocol multiplayer | ✔ engine + `web/map.html`, verified vs a relay + ghost |
 | 5. Movement + determinism | reconstruct + verify motion and RNG from recorded matches | ✔ `tools/verify_motion.js` (const-velocity) + `tools/verify_rng.js` (RNG lockstep **247/247**) |
-| 6. Per-entity simulation | the per-tick movement/physics step (`FUN_00479750`) | ◻ **in the client, large, not yet reconstructed** (see below) |
+| 6. Per-entity simulation | the per-tick movement/physics step (`FUN_00479750` …) | ◐ **in progress** — homing-projectile physics core reconstructed + verified (`port/sim/`); collision/other entity types remain |
 
 ### The genuinely unfinished pillar: the per-entity simulation
 

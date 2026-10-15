@@ -722,6 +722,23 @@ send + encrypted replay log). They operate on the game-state base `S` exactly as
 `in_ECX`; unreconstructed callees are `extern`. These are honest logic/structure reconstructions,
 not behaviour-verified.
 
+**Per-entity physics — reconstructed bottom-up in clean, VERIFIED layers (2026-10-16).** Rather
+than transcribe the decompiled `FUN_00479750` (which would be a derivative work and is partly
+rendering), the homing-projectile physics is being reimplemented as original code on primitives
+that *can* be checked against behavioural identities with no game ground-truth:
+`port/sim/axis_vecmath.c` (length, cross, normalise, Rodrigues axis-angle rotation, integrate —
+verified vs known identities), `axis_proj.c` (the homing steering law: rotate velocity toward the
+target by a capped turn, rescale to speed — verified: turn capped, speed held, heading error
+shrinks, converges), `axis_target.c` (nearest-eligible target acquisition — verified), and the
+integrated `axis_proj_update` lifecycle (acquire → steer → integrate → expire — verified end-to-end:
+a projectile homes onto and reaches its target and expires at its lifetime). Each has a native-`cc`
+test that passes. So a **functional, verified homing-projectile simulation core exists**. The
+remaining `FUN_00479750` concerns are separate subsystems layered on this: map collision
+(`FUN_00470bc0`, needs the map collision geometry), trail-billboard rendering (the GL part belongs to
+the render layer, not physics), the force/knockback application, and the per-weapon table params
+(run-time data). The other entity categories (`FUN_00475890`, `FUN_0048f8d0`) and the actor movement
+build the same way.
+
 **Two hard constraints on finishing the per-entity physics** (`FUN_00479750` et al.):
 1. *No offline ground-truth* — replays carry player state only (above).
 2. *x87 80-bit intermediates* — the decompile shows `float10` (x87 extended precision) temporaries in
