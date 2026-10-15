@@ -386,6 +386,16 @@ they are the textures `web/shapetex.html` and `map.html` use. The per-group nume
 geometry texturing needs the `STAGE\<map>\*` set plus the `NN`→`STAGE` slot mapping, which is a
 per-map/context binding not recoverable from the static mesh alone.
 
+**Measured (2026-10-16), confirming the limit.** For `Metropolis.bfd` (60 unique placed shapes),
+only **2** have a statically-resolvable skin (`FINALLYFREE\TREE`, `FINALLYFREE\BANNER02` via
+`SHAPE\<name>`); the other **58 — all the buildings** (`FINALLYFREE\BLDG_OS01`, `BLDG01_1`, …) —
+have **no** texture under any static scheme: not `SHAPE\<name>`, not the raw name, not
+`STAGE\METROPOLIS\<name>` (which contains only `METROPOLIS` backdrop + `CLAN`/`SKYINNERLAYER`/
+`SKYOUTERLAYER`, no building skins). So building/terrain surfaces have **no offline-resolvable
+binding at all**; they are painted only when the map's render path runs in a live match (the same
+dead-server wall as the combat sim). The engine therefore textures the 2 resolvable prop shapes
+and leaves the 58 buildings flat — correct given the data, not a missing feature.
+
 **Where the name comes from (chain fully mapped).** `FUN_004658d0(param_1=texname, …)` iterates
 the shape's groups (`count@shape+0x10`, array@`shape+0x14`, stride `0x80`, name@`group+4`, GL
 id→`group+0x44`): when `param_1` is non-empty it overwrites **every** group's name with
