@@ -181,6 +181,7 @@ function showMedia(label,arr){
   s.appendChild(el("span","n","· "+arr.length)); d.appendChild(s);
   for(const m of arr){
     const r=el("div","row"); r.appendChild(el("div","nm",m.name));
+    if(m.version) r.appendChild(el("span","badge","ver "+m.version));
     r.appendChild(el("div","sz",fmtBytes(m.size))); d.appendChild(r);
   }
   list.appendChild(d);

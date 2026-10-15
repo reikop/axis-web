@@ -92,11 +92,28 @@ emit(out, w, h, planes)                        # FUN_0046deb0  -> glTexImage2D b
 re-derive the DCT/entropy math in script. A standalone PNG extractor (optional, stage 1)
 would require reversing `FUN_0046e530` + `FUN_0046de30` fully.
 
-### 2.3 Binary blobs — loader partly mapped  (`Item.dat`, `Component.dat`, `Sound.dat`, `Map/*.bfd`, `*.ape`)
+### 2.3 Binary blobs  (`Item.dat`, `Component.dat`, `Sound.dat`, `Map/*.bfd`, `*.ape`)
 
-Start with a `u32` count then dense binary with long single-byte runs. `Map/*.bfd` are
-loaded through the `"%s.bfd"` format string (`0x4c6134`) inside the map loader
-`FUN_00467bf0` (2872 bytes) — next target to decompile.
+Start with a `u32` version/count then dense binary. **File version = `0x1201`** (the
+`01 12 00 00` header seen on `.bfd` and `.ape`; checked in the autoplay path and against
+`DAT_009dbd44`, else `"file damaged"` / `"incorrect file version"`).
+
+### 2.4 Map load pipeline  (`FUN_00467bf0`, the loading-screen state machine)
+
+A map is `<name>.bfd`, opened in sequence by several section parsers (submode at
+`this+0x233cc24`); the loading-screen labels name each stage:
+
+| stage | parser | reads from `.bfd` |
+|-------|--------|-------------------|
+| LOAD_ZONE_INFORMATION | `FUN_0048ae40` | ground / terrain (**first walkable-map target**) |
+| LOAD_OBJECT / OBSTACLE | `FUN_0048ab80(buf,0)` | static objects & obstacles |
+| SET_COLLISION_VOLUME | `FUN_004704c0` | collision volumes |
+| analyze_battle_field / play_info | `FUN_00486b30` | spawn / battle-field data |
+| mission objectives | `FUN_0048aa30` | objectives |
+| load_actor_info | `FUN_004739d0` | actors / NPCs |
+
+Autoplay/replay (`AutoPlay\%s`, mode 3) reads the same `0x1201` container. The tick also
+draws the loading screen with GL (`glClearColor`/`glClearDepth`/`glClear`/`glColor4f`).
 
 ## 3. Reverse-engineering map (procedures)
 
@@ -112,7 +129,13 @@ loaded through the `"%s.bfd"` format string (`0x4c6134`) inside the map loader
 | `0x46de30` | PTX codec/table init (arg = header `table`) |
 | `0x46dcb0` / `0x46dd60` | PTX plane combine → RGB / RGBA |
 | `0x46deb0` | PTX emit to output buffer |
-| `0x467bf0` | map (`.bfd`) loader |
+| `0x467bf0` | map load state machine (loading screen) |
+| `0x48ae40` | `.bfd` ground / terrain parser (next target) |
+| `0x48ab80` | `.bfd` object / obstacle parser |
+| `0x486b30` | `.bfd` battle-field / play-info parser |
+| `0x48aa30` | `.bfd` mission-objectives parser |
+| `0x4739d0` | `.bfd` actor-info parser |
+| `0x456070` | texture load-by-name (`Texture\...`) |
 | `0x49e03d` | path builder |
 | `0x49e02a` | fopen wrapper |
 | `0x49de96` | fread wrapper |
@@ -120,8 +143,10 @@ loaded through the `"%s.bfd"` format string (`0x4c6134`) inside the map loader
 
 ## 4. Next analysis targets
 
-1. `FUN_00467bf0` — `.bfd` map format (needed for the first walkable milestone).
+1. `FUN_0048ae40` — `.bfd` ground/terrain layout (the first walkable-map milestone).
 2. Shape record body @ its data blob — vertices / UVs / skeleton binding (renderer).
-3. Main loop / `WinMain` / entry; GL draw style (immediate vs. vertex arrays).
+3. `WinMain` / entry + main loop; GL draw style (immediate `glBegin` vs. vertex arrays).
 4. `WS2_32` send/recv call sites — multiplayer protocol → server reimplementation.
 5. (optional) full PTX block decoder for a standalone PNG extractor.
+
+See `../port/README.md` for how these feed the approach-B WASM build.

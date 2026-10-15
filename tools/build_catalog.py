@@ -77,6 +77,15 @@ def main():
                                            "note": "binary blob (loader not yet reversed)"}
 
     cat["media"]["maps"] = list_dir(game, "Map", {".bfd"})
+    # tag each map with its container version (0x1201 expected)
+    map_dir = os.path.join(game, "Map")
+    for m in cat["media"]["maps"]:
+        try:
+            with open(os.path.join(map_dir, m["name"]), "rb") as f:
+                (ver,) = struct.unpack("<I", f.read(4))
+            m["version"] = f"0x{ver:x}"
+        except Exception:
+            pass
     cat["media"]["music"] = list_dir(game, "Music", {".mp3"})
     cat["media"]["sound"] = list_dir(game, "Sound", {".wav"})
 
