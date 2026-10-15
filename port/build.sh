@@ -21,7 +21,7 @@ cd "$(dirname "$0")"
 SRC=(src/axis_crypt.c src/axis_netdecode.c)
 OUT=wasm/axis.wasm
 
-EXPORTS='["_axis_decrypt","_axis_encrypt","_axis_decode_state","_malloc","_free"]'
+EXPORTS='["_axis_decrypt","_axis_encrypt","_axis_decode_state","_axis_encode_state","_malloc","_free"]'
 
 if ! command -v emcc >/dev/null 2>&1; then
   echo "emcc not found. Install emsdk first (see the header of this script)."

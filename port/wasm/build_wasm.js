@@ -23,9 +23,10 @@ const vec = arr => [...uleb(arr.length), ...arr.flat()];
 // value types / opcodes
 const I32 = 0x7f, F32 = 0x7d, VOID = 0x40;
 const OP = { block:0x02, loop:0x03, end:0x0b, br:0x0c, br_if:0x0d, select:0x1b,
-  get:0x20, set:0x21, load8u:0x2d, load16s:0x2e, i32store:0x36, store8:0x3a, f32store:0x38,
-  i32:0x41, f32c:0x43, add:0x6a, or:0x72, xor:0x73, shl:0x74, shru:0x76, geu:0x4f,
-  fsub:0x93, fmul:0x94, fgt:0x5e, conv:0xb2 };
+  get:0x20, set:0x21, i32load:0x28, f32load:0x2a, load8u:0x2d, load16s:0x2e,
+  i32store:0x36, store8:0x3a, store16:0x3b, f32store:0x38,
+  i32:0x41, f32c:0x43, add:0x6a, and:0x71, or:0x72, xor:0x73, shl:0x74, shru:0x76, geu:0x4f,
+  fadd:0x92, fsub:0x93, fmul:0x94, fdiv:0x95, flt:0x5d, fgt:0x5e, conv:0xb2, trunc:0xa8 };
 const f32c = x => [OP.f32c, ...new Uint8Array(Float32Array.of(x).buffer)];
 
 // params: ptr=0 len=1 skip=2 ; locals: i=3 x=4
@@ -100,6 +101,32 @@ function bodyDecodeState() {
   return [...vec([[1, F32]]), ...ins];
 }
 
+// axis_encode_state(in=0, p=1) ; local raw=2 (f32). Inverse of decode; mirrors C.
+function bodyEncodeState() {
+  const IN = 0, P = 1, RAW = 2;
+  // store16 at p+off = trunc(f32load(in+inoff) / 10)
+  const q = (inoff, poff) => [OP.get, P, OP.get, IN, OP.f32load, 2, inoff, ...f32c(10), OP.fdiv, OP.trunc, OP.store16, 1, poff];
+  const ins = [
+    // p[1] = 0  (type)
+    OP.get, P, OP.i32, 0, OP.store8, 0, 1,
+    // p[4] = (actor & 0xf) << 4
+    OP.get, P, OP.get, IN, OP.i32load, 2, 0, OP.i32, 0xf, OP.and, OP.i32, 4, OP.shl, OP.store8, 0, 4,
+    // x/y/z -> int16 at p+5/7/9
+    ...q(4, 5), ...q(8, 7), ...q(12, 9),
+    // raw = yaw * 10
+    OP.get, IN, OP.f32load, 2, 16, ...f32c(10), OP.fmul, OP.set, RAW,
+    // if raw<0 raw += 3600   (select(raw+3600, raw, raw<0))
+    OP.get, RAW, ...f32c(3600), OP.fadd,
+    OP.get, RAW,
+    OP.get, RAW, ...f32c(0), OP.flt,
+    OP.select, OP.set, RAW,
+    // p[0xc] = trunc(raw / 14.0625)
+    OP.get, P, OP.get, RAW, ...f32c(14.0625), OP.fdiv, OP.trunc, OP.store8, 0, 0x0c,
+    OP.end,
+  ];
+  return [...vec([[1, F32]]), ...ins];
+}
+
 function buildModule() {
   const magic = [0x00, 0x61, 0x73, 0x6d], version = [0x01, 0x00, 0x00, 0x00];
   // types: 0 = (i32,i32,i32)->() ; 1 = (i32,i32)->()
@@ -107,8 +134,8 @@ function buildModule() {
     [0x60, ...vec([I32, I32, I32]), ...vec([])],
     [0x60, ...vec([I32, I32]), ...vec([])],
   ]));
-  // funcs: axis_decrypt(t0), axis_encrypt(t0), axis_decode_state(t1)
-  const funcSec = sec(3, vec([0, 0, 1]));
+  // funcs: axis_decrypt(t0), axis_encrypt(t0), axis_decode_state(t1), axis_encode_state(t1)
+  const funcSec = sec(3, vec([0, 0, 1, 1]));
   // memory: one, min 256 pages (16 MiB) — fits any AXIS file in one buffer
   const memSec = sec(5, vec([[0x00, ...uleb(256)]]));
   const expSec = sec(7, vec([
@@ -116,11 +143,13 @@ function buildModule() {
     [...str('axis_decrypt'), 0x00, 0],
     [...str('axis_encrypt'), 0x00, 1],
     [...str('axis_decode_state'), 0x00, 2],
+    [...str('axis_encode_state'), 0x00, 3],
   ]));
   const codeSec = sec(10, vec([
     [...uleb(bodyDecrypt().length), ...bodyDecrypt()],
     [...uleb(bodyEncrypt().length), ...bodyEncrypt()],
     [...uleb(bodyDecodeState().length), ...bodyDecodeState()],
+    [...uleb(bodyEncodeState().length), ...bodyEncodeState()],
   ]));
   return Uint8Array.from([...magic, ...version, ...typeSec, ...funcSec, ...memSec, ...expSec, ...codeSec]);
 }
@@ -241,23 +270,46 @@ async function main() {
       for (let k = 0; k < 3; k++) { const b = o + k * 76; if (b + 76 > dec.length || new DataView(dec.buffer, b + 8, 4).getUint32(0, true) !== 0x40) { ok = false; break; } }
       if (ok) start = o;
     }
-    const PB = 1 << 20, OB = PB + 64;
-    let sp = 0, sf = 0, shown = 0;
+    const fr = Math.fround;
+    const refEncode = s => {
+      const o = new Uint8Array(64), dv = new DataView(o.buffer);
+      o[1] = 0; o[4] = ((s.actor & 0xf) << 4) & 0xff;
+      dv.setInt16(5, Math.trunc(fr(fr(s.x) / 10)) | 0, true);
+      dv.setInt16(7, Math.trunc(fr(fr(s.y) / 10)) | 0, true);
+      dv.setInt16(9, Math.trunc(fr(fr(s.z) / 10)) | 0, true);
+      let raw = fr(fr(s.yaw) * 10); if (raw < 0) raw = fr(raw + 3600);
+      o[0x0c] = Math.trunc(fr(raw / fr(14.0625))) & 0xff;
+      return o;
+    };
+    const PB = 1 << 20, OB = PB + 64, EB = PB + 256;
+    let sp = 0, sf = 0, ep = 0, ef = 0, rt = 0, shown = 0;
+    const FIELDS = [1, 4, 5, 6, 7, 8, 9, 10, 0x0c];
     for (let o = start; o + 76 <= dec.length; o += 76) {
       if (new DataView(dec.buffer, o + 8, 4).getUint32(0, true) !== 0x40) break;
       const pay = dec.slice(o + 12, o + 12 + 64);
       if (pay[1] !== 0) continue;
-      const mm = new Uint8Array(memory.buffer); mm.set(pay, PB);
+      let mm = new Uint8Array(memory.buffer); mm.set(pay, PB);
       instance.exports.axis_decode_state(PB, OB);
       const dv = new DataView(memory.buffer);
       const got = { actor: dv.getInt32(OB, true), x: dv.getFloat32(OB + 4, true), y: dv.getFloat32(OB + 8, true), z: dv.getFloat32(OB + 12, true), yaw: dv.getFloat32(OB + 16, true) };
       const exp = refState(pay);
-      const ok = got.actor === exp.actor && got.x === exp.x && got.y === exp.y && got.z === exp.z && got.yaw === exp.yaw;
-      ok ? sp++ : sf++;
-      if (shown < 3) { console.log(`  state: actor ${got.actor} pos (${got.x},${got.y},${got.z}) yaw ${got.yaw.toFixed(2)}  ${ok ? 'PASS' : 'FAIL exp ' + JSON.stringify(exp)}`); shown++; }
+      const okD = got.actor === exp.actor && got.x === exp.x && got.y === exp.y && got.z === exp.z && got.yaw === exp.yaw;
+      okD ? sp++ : sf++;
+      // encode the decoded struct back to a packet
+      instance.exports.axis_encode_state(OB, EB);
+      const enc = new Uint8Array(memory.buffer).slice(EB, EB + 64);
+      const ref = refEncode(got);
+      const okE = FIELDS.every(i => enc[i] === ref[i]);
+      okE ? ep++ : ef++;
+      // round-trip: does the re-encoded packet recover the original quantised fields?
+      if ([5, 6, 7, 8, 9, 10, 0x0c].every(i => enc[i] === pay[i])) rt++;
+      if (shown < 3) { console.log(`  state: actor ${got.actor} pos (${got.x},${got.y},${got.z}) yaw ${got.yaw.toFixed(2)}  decode ${okD ? 'PASS' : 'FAIL'}  encode ${okE ? 'PASS' : 'FAIL'}`); shown++; }
     }
-    console.log(`\nstate-decode verification: ${sp} pass, ${sf} fail (vs reference, f32-exact)`);
-    if (sf) process.exit(1);
+    const total = sp + sf;
+    console.log(`\nstate-decode  : ${sp}/${total} pass (vs reference, f32-exact)`);
+    console.log(`state-encode  : ${ep}/${total} pass (vs reference, f32-exact)`);
+    console.log(`encode∘decode : ${rt}/${total} recover the original quantised packet fields`);
+    if (sf || ef) process.exit(1);
   }
 }
 main().catch(e => { console.error(e); process.exit(1); });

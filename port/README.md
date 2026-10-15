@@ -6,9 +6,12 @@ Two reconstructed primitives already **run as WebAssembly and are verified on th
 files** (not just the cipher):
 
 - `src/axis_crypt.c` — the obfuscation cipher (`FUN_0046c060`/`FUN_0046c0b0`, SPEC §2.3).
-- `src/axis_netdecode.c` — the type-0 state-packet decoder (`FUN_0048bca0` case 0, SPEC §4):
-  actor + world position (int16×10) + heading. **`node wasm/build_wasm.js` verifies it f32-exact
-  on all 6844 type-0 packets of a real replay (6844/6844 pass).**
+- `src/axis_netdecode.c` — the type-0 state-packet **codec**: `axis_decode_state` (`FUN_0048bca0`
+  case 0) → actor + world position (int16×10) + heading, and its inverse `axis_encode_state`
+  (the send side, `FUN_0048d750`) that builds an AXIS-format state packet. **`node wasm/build_wasm.js`
+  verifies both f32-exact on all 6844 type-0 packets of a real replay — decode 6844/6844, encode
+  6844/6844, and encode∘decode recovers every original packet.** So a WASM client can both parse
+  and emit the game's real wire format, not an ad-hoc relay format.
 
 Both are verified in two ways:
 

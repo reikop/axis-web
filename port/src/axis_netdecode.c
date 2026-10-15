@@ -37,3 +37,21 @@ void axis_decode_state(const uint8_t *p, struct axis_state *out) {
     if (raw > 1800.0f) raw -= 3600.0f;
     out->yaw = raw * 0.1f;
 }
+
+/* Inverse of axis_decode_state — build the position/heading fields of a type-0
+ * state packet (the SEND side, mirroring the builder FUN_0048d750). This is the
+ * primitive a WASM client uses to emit AXIS-format state, so online play speaks
+ * the game's real wire protocol rather than an ad-hoc relay format. Only the
+ * fields this project has decoded are written; the rest of the 64 bytes stay 0.
+ */
+EXPORT
+void axis_encode_state(const struct axis_state *in, uint8_t *p) {
+    p[1] = 0;                                   /* packet type 0 */
+    p[4] = (uint8_t)((in->actor & 0xf) << 4);   /* (actor<<4)|mode, mode 0 */
+    *(int16_t *)(p + 5) = (int16_t)(in->x / 10.0f);
+    *(int16_t *)(p + 7) = (int16_t)(in->y / 10.0f);
+    *(int16_t *)(p + 9) = (int16_t)(in->z / 10.0f);
+    float raw = in->yaw * 10.0f;
+    if (raw < 0.0f) raw += 3600.0f;
+    p[0x0c] = (uint8_t)(raw / 14.0625f);
+}
