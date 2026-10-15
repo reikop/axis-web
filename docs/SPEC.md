@@ -689,9 +689,28 @@ spawns trail/effect records (`FUN_00478dd0`), and on expiry applies a force/knoc
 target actor's state (`*(float*)(0x1ce1c04 + actor*0x8888) = Δ * k * 10.0`). So the client *does*
 run projectile motion + effect + force application locally (damage *scoring* still server-side — the
 client only applies type-14 HP). The player **movement** physics (actor input→accel) is a *different*
-function still to be pinned among `FUN_00478f10/0048e220/004901d0`; the per-tick sim is multi-function
-and only partially characterised. This is the concrete, in-client reconstruction target — real work,
-accurately scoped, not yet done.
+function still to be pinned; the per-tick sim is multi-function and only partially characterised.
+
+*Full dispatcher map (2026-10-16).* The six "chain" entries are **four entity-category update loops**
+plus two helpers — each loop walks an active-flag array and calls a large per-entity physics
+function:
+
+| dispatcher | count @ | array @ | stride | per-entity fn | role |
+|-----------|---------|---------|--------|---------------|------|
+| `FUN_00478f10` | `0x20f2da0` | `0x20a99c4` | `0x12c` | `FUN_00475890` | entity type A |
+| `FUN_0047c480` | `0x20a99b4` | `0x202ef34`¹ | `0x4e8` | `FUN_00479750` | projectiles / weapon entities |
+| `FUN_004901d0` | `0x13c9b24` | `0x131ae48` | `0x2cc` | `FUN_0048f8d0` | entity type C |
+| `FUN_0048e220` | — | — | — | (dispatcher, unread) | entity type D |
+
+¹ record base `0x202ef34`, flag at `+0`. The other two chain entries are helpers: `FUN_004962d0`
+(animation frame timer) and `FUN_0048f1e0` (scene loader). Actors live at `*0x8888` (`0x1cd9528`
+position, `0x1ce1c04` velocity/force) and are *referenced* by these per-entity functions (e.g.
+projectiles apply force into an actor's state). **This is the concrete, in-client reconstruction
+target: ~four per-entity float/vector physics functions (`FUN_00475890/00479750/0048f8d0/…`, tens of
+KB total) + their per-entity struct layouts + the `0x8888` actor block fields.** It is tractable
+(the code is in the binary; a reconstruction is checkable by re-running it with a replay's
+inputs/RNG against the recorded positions, since the RNG is verified) but it is a large multi-session
+effort, and it is honestly **not done** — the port is not complete, and this is what remains.
 
 Behaviour-exact reconstruction of these + verification. **Update:** the **Emscripten toolchain
 is now set up and working** (Ubuntu/WSL2, `emcc 3.1.69`, `node v22`) — `port/build.sh` compiles
