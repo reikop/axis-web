@@ -148,6 +148,39 @@
     if (wb) wb.onclick = () => go('');
   }
 
+  // Real game sound effects from the user's own Sound/ (Web Audio): a homing-missile
+  // launch on fire, an explosion on each impact burst, and the ammo sound on pickup.
+  function startSfx(M) {
+    const files = { fire: '/game/Sound/weapon/guided/hsm-01.wav', impact: '/game/Sound/explode/medium.wav', pickup: '/game/Sound/getitem/ammo.wav' };
+    let ctx = null; const buffers = {};
+    const ensureCtx = () => {
+      if (!ctx) { try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (_) {} }
+      if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+      return ctx;
+    };
+    for (const [k, u] of Object.entries(files)) {
+      fetch(u).then(r => r.ok ? r.arrayBuffer() : Promise.reject(r.status))
+        .then(ab => { const c = ensureCtx(); return c ? c.decodeAudioData(ab) : null; })
+        .then(buf => { if (buf) buffers[k] = buf; }).catch(() => {});
+    }
+    const play = (k) => {
+      console.log('sfx:' + k);
+      const c = ensureCtx(); if (!c || !buffers[k]) return;
+      try { const s = c.createBufferSource(); s.buffer = buffers[k]; s.connect(c.destination); s.start(); } catch (_) {}
+    };
+    window.__playSfx = play;
+    window.addEventListener('keydown', e => { if ((e.key === 'f' || e.key === 'F') && !e.repeat) play('fire'); });
+    canvas.addEventListener('click', ensureCtx);
+    let li = 0, lp = 0;
+    try { li = M.ccall('engine_impacts', 'number', [], []); lp = M.ccall('engine_pickups', 'number', [], []); } catch (_) {}
+    setInterval(() => {
+      try {
+        const i = M.ccall('engine_impacts', 'number', [], []); if (i > li) play('impact'); li = i;
+        const p = M.ccall('engine_pickups', 'number', [], []); if (p > lp) play('pickup'); lp = p;
+      } catch (_) {}
+    }, 120);
+  }
+
   if (!mapName && !qs.has('i')) { showStartMenu(); }
   else AxisEngine({ canvas, onRuntimeInitialized() {} }).then(async (M) => {
     try {
@@ -200,7 +233,8 @@
         }
         if (placed >= 0 && qs.has('proj')) {           // ?proj -> run the reconstructed projectile sim in-engine
           M.ccall('engine_proj_demo', null, [], []);
-          if (qs.has('fire')) setInterval(() => { try { M.ccall('engine_fire', null, [], []); } catch (_) {} }, 1000);
+          startSfx(M);                                  // real game SFX on fire / impact / pickup
+          if (qs.has('fire')) setInterval(() => { try { M.ccall('engine_fire', null, [], []); if (window.__playSfx) window.__playSfx('fire'); } catch (_) {} }, 1000);
           statusEl.textContent += ' · sim live: homing projectiles collide with map geometry, spawn gravity debris, open a proximity gate, and collect pickups. Walk with WASD, press F to fire a projectile from the camera (it flies, collides with the map, bursts debris) — reconstructed port/sim: axis_proj + axis_broadphase + axis_collide + axis_effect + axis_prop + axis_pickup + axis_input, all in WASM';
         }
       } else {

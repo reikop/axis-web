@@ -88,6 +88,7 @@ int axis_pickup_in_range(const float *itemPos, const float *actorPos, float item
 #define MAXITEMS 12
 static float gItemPos[MAXITEMS*3];
 static int gItemAlive[MAXITEMS], gItemN = 0, gPickupCount = 0;
+static int gImpactCount = 0;   /* monotonic debris/impact bursts, for SFX polling */
 
 /* the verified client input layer (axis_input.c): the engine's key edges feed
  * 16 action channels; channel 0 ("fire", bound to F) is built into an
@@ -259,6 +260,7 @@ EMSCRIPTEN_KEEPALIVE void engine_set_avatars(const float *xyz, int n) {
 /* spawn a burst of gravity debris (the verified axis_effect debris layer) at a
  * projectile impact point; each piece gets an upward+outward kick and arcs down. */
 static void spawn_debris(const float *at) {
+    gImpactCount++;              /* one impact burst — the page plays an explosion SFX per increment */
     for (int k = 0; k < 10; k++) {
         int slot = -1;
         for (int i = 0; i < MAXDEBRIS; i++) { int j = (gDebrisN + i) % MAXDEBRIS; if (!gDebrisAlive[j]) { slot = j; break; } }
@@ -302,6 +304,9 @@ EMSCRIPTEN_KEEPALIVE void engine_fire(void) { gActPress[0] = 1; }
 
 /* HUD state: how many pickups the reconstructed axis_pickup layer has collected. */
 EMSCRIPTEN_KEEPALIVE int engine_pickups(void) { return gPickupCount; }
+
+/* monotonic impact-burst count, polled by the page to play an explosion SFX. */
+EMSCRIPTEN_KEEPALIVE int engine_impacts(void) { return gImpactCount; }
 
 /* Decode one Shape.dat record into a dedicated entity-mesh buffer, so the demo
  * can draw its targets as a real AXIS model instead of a cube. Stores the mesh
