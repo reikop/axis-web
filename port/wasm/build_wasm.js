@@ -21,10 +21,12 @@ const sec = (id, bytes) => [id, ...uleb(bytes.length), ...bytes];
 const vec = arr => [...uleb(arr.length), ...arr.flat()];
 
 // value types / opcodes
-const I32 = 0x7f, VOID = 0x40;
-const OP = { block:0x02, loop:0x03, end:0x0b, br:0x0c, br_if:0x0d,
-  get:0x20, set:0x21, load8u:0x2d, store8:0x3a, i32:0x41,
-  add:0x6a, or:0x72, xor:0x73, shl:0x74, shru:0x76, geu:0x4f };
+const I32 = 0x7f, F32 = 0x7d, VOID = 0x40;
+const OP = { block:0x02, loop:0x03, end:0x0b, br:0x0c, br_if:0x0d, select:0x1b,
+  get:0x20, set:0x21, load8u:0x2d, load16s:0x2e, i32store:0x36, store8:0x3a, f32store:0x38,
+  i32:0x41, f32c:0x43, add:0x6a, or:0x72, xor:0x73, shl:0x74, shru:0x76, geu:0x4f,
+  fsub:0x93, fmul:0x94, fgt:0x5e, conv:0xb2 };
+const f32c = x => [OP.f32c, ...new Uint8Array(Float32Array.of(x).buffer)];
 
 // params: ptr=0 len=1 skip=2 ; locals: i=3 x=4
 const P_PTR = 0, P_LEN = 1, P_SKIP = 2, L_I = 3, L_X = 4;
@@ -72,23 +74,53 @@ function bodyEncrypt() {
   return [...vec([[2, I32]]), ...ins];
 }
 
+// axis_decode_state(p=0, out=1) ; local raw=2 (f32). Mirrors axis_netdecode.c.
+function bodyDecodeState() {
+  const P = 0, O = 1, RAW = 2;
+  const ld16 = off => [OP.get, P, OP.load16s, 1, ...uleb(off), OP.conv, ...f32c(10), OP.fmul];
+  const ins = [
+    // actor: out[0] = p[4] >> 4
+    OP.get, O, OP.get, P, OP.load8u, 0, 4, OP.i32, 4, OP.shru, OP.i32store, 2, 0,
+    // x/y/z at out+4/+8/+12 = int16(p+5/7/9) * 10
+    OP.get, O, ...ld16(5), OP.f32store, 2, 4,
+    OP.get, O, ...ld16(7), OP.f32store, 2, 8,
+    OP.get, O, ...ld16(9), OP.f32store, 2, 12,
+    // raw = p[0xc] * 14.0625
+    OP.get, P, OP.load8u, 0, 0x0c, OP.conv, ...f32c(14.0625), OP.fmul, OP.set, RAW,
+    // yaw at out+16 = select(raw-3600, raw, raw>1800) * 0.1
+    OP.get, O,
+      OP.get, RAW, ...f32c(3600), OP.fsub,
+      OP.get, RAW,
+      OP.get, RAW, ...f32c(1800), OP.fgt,
+      OP.select,
+      ...f32c(0.1), OP.fmul,
+    OP.f32store, 2, 16,
+    OP.end,
+  ];
+  return [...vec([[1, F32]]), ...ins];
+}
+
 function buildModule() {
   const magic = [0x00, 0x61, 0x73, 0x6d], version = [0x01, 0x00, 0x00, 0x00];
-  // type: (i32,i32,i32)->()   index 0
-  const typeSec = sec(1, vec([[0x60, ...vec([I32, I32, I32]), ...vec([])]]));
-  // funcs: two of type 0
-  const funcSec = sec(3, vec([0, 0]));
+  // types: 0 = (i32,i32,i32)->() ; 1 = (i32,i32)->()
+  const typeSec = sec(1, vec([
+    [0x60, ...vec([I32, I32, I32]), ...vec([])],
+    [0x60, ...vec([I32, I32]), ...vec([])],
+  ]));
+  // funcs: axis_decrypt(t0), axis_encrypt(t0), axis_decode_state(t1)
+  const funcSec = sec(3, vec([0, 0, 1]));
   // memory: one, min 256 pages (16 MiB) — fits any AXIS file in one buffer
   const memSec = sec(5, vec([[0x00, ...uleb(256)]]));
-  // exports: memory, axis_decrypt(func0), axis_encrypt(func1)
   const expSec = sec(7, vec([
     [...str('memory'), 0x02, 0],
     [...str('axis_decrypt'), 0x00, 0],
     [...str('axis_encrypt'), 0x00, 1],
+    [...str('axis_decode_state'), 0x00, 2],
   ]));
   const codeSec = sec(10, vec([
     [...uleb(bodyDecrypt().length), ...bodyDecrypt()],
     [...uleb(bodyEncrypt().length), ...bodyEncrypt()],
+    [...uleb(bodyDecodeState().length), ...bodyDecodeState()],
   ]));
   return Uint8Array.from([...magic, ...version, ...typeSec, ...funcSec, ...memSec, ...expSec, ...codeSec]);
 }
@@ -184,7 +216,48 @@ async function main() {
     console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${path.basename(file).padEnd(22)} ${raw.length} bytes (skip ${skip})`);
     ok ? pass++ : fail++;
   }
-  console.log(`\nreal-data verification: ${pass} pass, ${fail} fail`);
+  console.log(`\ncipher real-data verification: ${pass} pass, ${fail} fail`);
   if (fail) process.exit(1);
+
+  // ---- axis_decode_state: verify the WASM state decoder on real type-0 packets
+  const fround = Math.fround;
+  const refState = pay => {
+    const dv = new DataView(pay.buffer, pay.byteOffset, pay.byteLength);
+    const actor = pay[4] >> 4;
+    const x = fround(dv.getInt16(5, true) * 10), y = fround(dv.getInt16(7, true) * 10), z = fround(dv.getInt16(9, true) * 10);
+    let raw = fround(pay[0x0c] * fround(14.0625)); if (raw > 1800) raw = fround(raw - 3600);
+    return { actor, x, y, z, yaw: fround(raw * fround(0.1)) };
+  };
+  const apeFile = game && path.join(game, 'AutoPlay', 'Autoplay001.ape');
+  if (apeFile && fs.existsSync(apeFile)) {
+    const raw = fs.readFileSync(apeFile);
+    const m = new Uint8Array(memory.buffer);
+    m.set(raw, 0);
+    axis_decrypt(0, raw.length, 0);                 // WASM decrypt the whole replay
+    const dec = m.slice(0, raw.length);
+    let start = -1;
+    for (let o = 0; o < 4096 && start < 0; o++) {
+      let ok = true;
+      for (let k = 0; k < 3; k++) { const b = o + k * 76; if (b + 76 > dec.length || new DataView(dec.buffer, b + 8, 4).getUint32(0, true) !== 0x40) { ok = false; break; } }
+      if (ok) start = o;
+    }
+    const PB = 1 << 20, OB = PB + 64;
+    let sp = 0, sf = 0, shown = 0;
+    for (let o = start; o + 76 <= dec.length; o += 76) {
+      if (new DataView(dec.buffer, o + 8, 4).getUint32(0, true) !== 0x40) break;
+      const pay = dec.slice(o + 12, o + 12 + 64);
+      if (pay[1] !== 0) continue;
+      const mm = new Uint8Array(memory.buffer); mm.set(pay, PB);
+      instance.exports.axis_decode_state(PB, OB);
+      const dv = new DataView(memory.buffer);
+      const got = { actor: dv.getInt32(OB, true), x: dv.getFloat32(OB + 4, true), y: dv.getFloat32(OB + 8, true), z: dv.getFloat32(OB + 12, true), yaw: dv.getFloat32(OB + 16, true) };
+      const exp = refState(pay);
+      const ok = got.actor === exp.actor && got.x === exp.x && got.y === exp.y && got.z === exp.z && got.yaw === exp.yaw;
+      ok ? sp++ : sf++;
+      if (shown < 3) { console.log(`  state: actor ${got.actor} pos (${got.x},${got.y},${got.z}) yaw ${got.yaw.toFixed(2)}  ${ok ? 'PASS' : 'FAIL exp ' + JSON.stringify(exp)}`); shown++; }
+    }
+    console.log(`\nstate-decode verification: ${sp} pass, ${sf} fail (vs reference, f32-exact)`);
+    if (sf) process.exit(1);
+  }
 }
 main().catch(e => { console.error(e); process.exit(1); });

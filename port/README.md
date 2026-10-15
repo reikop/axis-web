@@ -2,9 +2,15 @@
 
 ## Status: the WASM path is live and verified
 
-The first reconstructed primitive — the AXIS obfuscation cipher
-(`src/axis_crypt.c`, from `AXIS.EXE` `FUN_0046c060`/`FUN_0046c0b0`, SPEC §2.3) — already
-**runs as WebAssembly and is verified byte-for-byte on the real game files**, in two ways:
+Two reconstructed primitives already **run as WebAssembly and are verified on the real game
+files** (not just the cipher):
+
+- `src/axis_crypt.c` — the obfuscation cipher (`FUN_0046c060`/`FUN_0046c0b0`, SPEC §2.3).
+- `src/axis_netdecode.c` — the type-0 state-packet decoder (`FUN_0048bca0` case 0, SPEC §4):
+  actor + world position (int16×10) + heading. **`node wasm/build_wasm.js` verifies it f32-exact
+  on all 6844 type-0 packets of a real replay (6844/6844 pass).**
+
+Both are verified in two ways:
 
 - `build.sh` compiles `src/*.c` to WASM with Emscripten (run in WSL; see below).
 - Because this repo was produced with no C toolchain, `node wasm/build_wasm.js <game_dir>`
