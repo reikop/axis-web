@@ -700,6 +700,20 @@ by `run.py` at `/game/`; `web/audio.json` holds only filenames — no audio is c
      not window messages) to select the server and connect — a substantial separate step. The static
      map (open → socket → `FUN_00452f20` connect → lobby types 2/6/7 → in-match) is complete; the live
      capture is gated on that UI automation.
+   * **The real offline wall, screenshotted + traced (2026-10-16): there is no server-select UI to
+     automate — `AXIS.EXE` hangs at the "INITIALIZING NETSPHERE OPERATING SYSTEM" splash.** A window
+     capture of the running client shows it never leaves that boot splash; a broad Frida trace there
+     shows it calls **only `timeGetTime`** (~300/s, its frame timer) and a little `GetTickCount` —
+     **zero** registry reads, file opens, `FindWindow`, `CreateThread`, and **zero** Winsock
+     (`WSAStartup`/`socket`/`gethostbyname` never called). So standalone `AXIS.EXE` does not even
+     initialise networking; it spins waiting on an internal "init complete" signal that never arrives.
+     This matches the title's two-process design: the separate **`AxisPlay.exe` launcher** performs
+     login / server-select / NetSphere auth and hands `AXIS.EXE` a ready session, so the 3D client
+     expects that handoff rather than connecting itself. With `AxisPlay.exe` absent (this install has
+     only `AXIS.EXE`) and the NetSphere servers gone, the client can never pass init. Closing this
+     therefore means reimplementing the launcher + NetSphere backend handoff, not just a game server —
+     a far larger project than the in-game wire protocol (which is fully mapped). This is the measured
+     root cause of the offline boundary.
    This is a genuine multi-stage reversal (full login/match handshake, then a protocol-correct
    server, then driving the client in) — begun and mapped here, but a standalone project, and its
    runtime behaviour (like §2.10) can't be verified offline until that server exists.
