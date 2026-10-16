@@ -101,17 +101,34 @@ long-standing "animation keyframe sampler can't be observed offline (needs a liv
 window still shows the splash overlay — pixels are gated by the independent boot layer — but the
 sampler does not need pixels to be captured.)
 
-Call-frequency profiling inside the mode-2 render (per `FUN_00497d70` invocation, measured) maps the
-render pipeline: the heavy callees are `0x49e274` (~2562/frame, a float math leaf), `0x47c800`
-(~212/frame, matrix multiply), `0x467a50` (~71/frame, returns the viewport width), `0x47ca20`
-(~42/frame, a **4×4 matrix copy** — confirmed by decompile) and `0x471e30` (~1/entity, the
-**camera + entity screen-projection** for HUD/targeting — `gluLookAt`/`gluPerspective` then world→screen,
-*not* the skeletal sampler, corrected). `0x470bc0` (~3/frame) is the already-reconstructed
-broadphase/xform. **The per-bone keyframe sampler was not isolated as its own hot callee** — it is
-either inlined in the skeletal-mesh draw or a deeper callee not yet pinned; reconstructing the per-key
-stride/time-base (hook the skeletal draw, feed a known time, trace which keyframe bytes it reads)
-remains the open step. It is **unblocked** (the path runs offline) but not yet done — and it is a
-fidelity refinement only: the web port already animates replay actors from the `.ape` actor state.
+Call-frequency profiling of **all ~80 callees** of `FUN_00497d70` in the forced mode-2 render maps the
+pipeline. The hot paths are: `0x467a60` (~184/frame) and `0x467a50` (~71/frame, viewport-width getter)
+GL matrix-stack helpers; `0x466c60` (~53/frame) = **per-axis vector rotation** and `0x466c00`
+(~37/frame) = **vec3 normalize** (both decompiled); `0x47c800` (~212/frame, matrix multiply),
+`0x47ca20` (~42/frame, **4×4 matrix copy**), `0x49e274` (~2562/frame, float math leaf); `0x471e30`
+(~1/entity, **camera + entity screen-projection** for HUD/targeting — not the skeletal sampler); and a
+handful of ~1/entity callees including `0x4971b0`, which decompiles to a **procedural grid/ring mesh
+builder** (an animated water/effect surface, using `0x466c60` to sweep a 4-point ring at 0/90/180/270°).
+`0x470bc0` (~3/frame) is the already-reconstructed broadphase/xform.
+
+**Verified rotation/angle convention (engine-wide):** `FUN_00466c60(axis, angle)` rotates a vec3 about
+`axis` (0=X, 1=Y, 2=Z) by `angle` expressed in **integer tenths of a degree** (`angle mod 3600`,
+3600 = 360°), via precomputed LUTs — **cosine table at `0x00a19408`, sine table at `0x00a1cc48`**, each
+3600 floats. This is how the engine applies all rotations (procedural meshes and skeletal bones alike);
+the same `(&DAT_00a19408)[idx mod 3600]` LUT read appears in `FUN_00471e30`.
+
+**Honest status of the character skeleton keyframe sampler — still gated (correcting the earlier
+"now observable" claim):** the **character** per-bone keyframe sampler was **not** among the hot callees
+in the forced-playback state. What runs is procedural-mesh + camera/projection + matrix/normalize
+helpers; no per-bone character-animation hot path appears. That is consistent with no visible character
+models being drawn (the window shows the splash overlay, not the arena), i.e. the character skeletal
+draw is gated behind the **same scene-active / visible-model condition as the on-screen pixels**. So the
+sampler is **not** independently observable after all — it sits behind the same boot/presentation gate.
+Reconstructing its per-key stride/time-base therefore still depends on cracking that gate (or on static
+analysis of the skeletal-draw branch within the 17 KB `FUN_00497d70`). It remains a **fidelity**
+refinement only: the web port already animates replay actors from the `.ape` actor state, and the
+rotation convention above (tenths-of-degree + the two LUTs) is the one concrete new primitive this
+profiling did pin down.
 
 ### What this means for the boundary
 
