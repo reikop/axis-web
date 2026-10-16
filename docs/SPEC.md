@@ -688,6 +688,18 @@ by `run.py` at `/game/`; `web/audio.json` holds only filenames — no audio is c
      from Frida by calling `FUN_00452350(0, &"127.0.0.1")` — the next concrete step: drive this, let
      the loopback server answer, and capture the client's first (login) packet to continue the
      handshake reversal.
+   * **Force-connect attempted and measured (2026-10-16).** `FUN_00453dd0(addr)` opens the TCP
+     transport — init `FUN_00452bb0`, socket `FUN_00452ec0`, **connect `FUN_00452f20(0, addr)`**,
+     setting `DAT_00a0ec74=1`. Tried to drive it from Frida (loopback listeners up on `:7777`/`:7778`,
+     game at the pre-connect screen): calling `FUN_00453dd0(&"127.0.0.1")` produced **no** `connect`
+     and did not return, and `DAT_00a0e7f0` reads uninitialised (`0xFF…`) before the UI flow runs.
+     So the connect chain can't just be invoked out of context — the server address isn't populated
+     until the client's own UI connect flow executes, and that flow must run on the game's thread with
+     its session state set up. The remaining route to a live connection is therefore driving the
+     game's **DirectInput** UI (hardware-level `SendInput`, since the client reads raw device state,
+     not window messages) to select the server and connect — a substantial separate step. The static
+     map (open → socket → `FUN_00452f20` connect → lobby types 2/6/7 → in-match) is complete; the live
+     capture is gated on that UI automation.
    This is a genuine multi-stage reversal (full login/match handshake, then a protocol-correct
    server, then driving the client in) — begun and mapped here, but a standalone project, and its
    runtime behaviour (like §2.10) can't be verified offline until that server exists.
