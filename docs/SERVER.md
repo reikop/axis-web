@@ -43,6 +43,16 @@ reversing and reimplementing `AxisPlay.exe`'s signaling — not a one-byte patch
 `netsphere`/`initializing`/`axisplay` also returns nothing: the splash is a texture, so there is no
 init-state string to anchor on either.)
 
+The handoff is also **not** a named-IPC signal that could be spoofed from outside: hooking the wait
+APIs and resolving every waited-on handle with `NtQueryObject(ObjectNameInformation)` shows the
+client blocks on **13 distinct handles, all anonymous (0 named)**, and over the window it creates/
+opens **no** named event, mutex or file-mapping (`CreateEventW`/`OpenEventW`/`CreateMutexW`/
+`OpenMutexW`/`CreateFileMappingW`/`OpenFileMappingW` all unseen). So the launcher passes the client
+**anonymous/inherited handles at `CreateProcess` time** (the usual socket-/event-handle inheritance
+pattern), which a standalone launch never receives. Emulating it therefore requires actually
+reimplementing `AxisPlay.exe`'s process-launch + handle-passing (and then the backend it hands off),
+not signalling a named object — confirming the server-emulator scale.
+
 ## What is already mapped (the in-game wire protocol — fully reversed)
 
 Once a client is in a match the wire format is **completely** reverse-engineered and reimplemented
