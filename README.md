@@ -21,8 +21,23 @@ WebSocket platform shim (approach B — see `port/README.md`).
 > transfer. Reading the client's per-tick code shows the player's position/orientation are *read
 > from* the networked actor state (type-0 snapshots + client dead-reckoning), never computed from
 > input on the client — so that transfer runs server-side, and with the original servers long gone
-> there is no offline ground truth to reconstruct or verify it against. Everything the client
-> itself runs per tick **is** reconstructed and verified; details below.
+> there is no offline ground truth to reconstruct or verify it against. Interactive walking uses the
+> **replay-verified** movement model instead (const-velocity dead-reckoning, SPEC §5), so this gap is
+> a feel nuance, not a hole in a playable port. Everything the client itself runs per tick **is**
+> reconstructed and verified; details below.
+>
+> **Verified end-to-end in a browser (2026-10-16).** Served locally and driven headless: the WebGL
+> engine renders real maps (e.g. Metropolis, 118 objects), the reconstructed simulation runs live
+> (`?map=NAME&proj` — projectiles, gravity debris, pickups, destruction counter), and the **3D replay**
+> plays a real recorded 2005 match (`Autoplay001.ape`: players *k'*, *OneShotOneKill*, *onlynike* over
+> Metropolis) — all with **zero page errors**. The original client has the same offline playback built
+> in (its attract-mode `processAutoPlayMode`, reverse-engineered in `docs/SERVER.md`): forcing it past
+> its launcher-gated boot shows it loading the very same `AutoPlay/*.ape` into its real engine and
+> running the in-match pipeline (actors driven, per-tick + render executing) with **no server** — this
+> web port does that same thing, and renders it visibly, which the gated native client cannot offline.
+> Model posing in the reachable render path is **orientation-from-actor-state** (8-direction billboard
+> facing + pitch/yaw in tenths-of-a-degree via the engine's sin/cos LUTs), not time-keyframe
+> interpolation — i.e. exactly what the replay reproduces.
 
 ## Quick start (local)
 
