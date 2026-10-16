@@ -92,6 +92,22 @@ offline (see `docs/SPEC.md` §4, `web/crypt.js`, `server/relay.js`, `tools/parse
 So a server that is already *in a match* with a client speaks a known language — recorded matches
 (`AutoPlay/*.ape`) are exactly this traffic and already replay in the engine.
 
+## The transport is in-process buffers, not a socket (recv reversed)
+
+`FUN_004a7ab0` (the packet drain the net tick calls) makes **no Winsock calls** — consistent with the
+zero-Winsock startup trace. It reads 64-byte (`0x40`) packets out of **in-process global buffers**,
+round-robin over 16 channels (`DAT_00b12bb0 & 0xf`): the per-channel sequence ring at
+`DAT_00af0b70 + (channel*0x80 + idx)*0x40` (the same ring `pnSendPacketData` writes) and the per-actor
+roster slots at `DAT_009fad20 + actor*0x410` (the same slots the lobby handler `FUN_00450520` fills),
+gated by per-actor ready-flags `DAT_009fad18[actor*0x104]` and sequence indices `DAT_00b12b70`. So the
+client's "send"/"recv" move 64-byte frames in and out of these globals; something external deposits
+inbound frames there (a shared section, cross-process injection, or a net worker — not `ws2_32`,
+which the client never calls). **For an emulator this is the concrete injection point**: writing a
+64-byte frame into the inbound ring / roster slot and setting the actor's ready-flag is exactly what
+delivers a packet to the client; `server/relay.js` already produces these frames. Open question for
+the launcher side: how frames physically cross from the network front-end into these globals (the next
+reversal step).
+
 ## The lobby / connection entry points (mapped; the missing front half)
 
 What is **not** reachable offline is everything before in-match. The entry points:
