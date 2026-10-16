@@ -662,7 +662,10 @@ by `run.py` at `/game/`; `web/audio.json` holds only filenames — no audio is c
    * **Session/lobby inbound dispatcher = `FUN_00450520`** (`switch(msgType-1)` on the lower
      transport layer, distinct from the in-game `FUN_0048bca0`): type 1 → an incoming **chat/text**
      message (`FUN_004507e0` formats `"<name> > <text>"` via `wsprintfA` into `DAT_009fee18` — not
-     connection init, corrected on read), type 2 → session setup (`FUN_004535c0`/`FUN_00450a30`),
+     connection init, corrected on read), type 2 → **session reset**: sets the session id
+     `DAT_009fee1c` and calls `FUN_00450a30`, which zeroes `DAT_009fa8a8` (16 dwords) and clears
+     every per-actor roster slot in the `DAT_009fad10` array (stride `0x410`) — i.e. "new session,
+     drop the roster", after which the join-ACKs repopulate it,
      **type 6 → the join-ACK**: it sets
      `DAT_009fad08 = 1`, marks the actor slot `DAT_009fad10[actor*0x104]=1` and stores the
      client's own actor id in `DAT_009fee24` (the id `pnSendPacketData` then stamps into every
