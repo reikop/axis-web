@@ -34,7 +34,12 @@ WebSocket platform shim (approach B — see `port/README.md`).
 > way**: against a running `server/relay.js` and a second peer, a browser client (`?map=NAME&mp`)
 > connects, is assigned a slot, and exchanges real-protocol 64-byte state frames **bidirectionally** —
 > the peer decoded the browser's state byte-exactly through the `crypt.js` codec, and the browser
-> received the peer's relayed frames, at the game's ~120 ms cadence. The original client has the same offline playback built
+> received the peer's relayed frames, at the game's ~120 ms cadence. **Networked combat** rides on top
+> (peer-relayed, non-authoritative — there is no original server): `F` broadcasts a shot, each client
+> renders every player's projectiles, the shooter detects hits against the other players' live
+> positions and sends a damage event, and the victim applies it (HP, death, respawn, kill score).
+> Verified end-to-end over the relay: a peer's hit messages drove a browser client through
+> 100→75→50→25→0 → **respawn** → repeat, with zero page-errors. The original client has the same offline playback built
 > in (its attract-mode `processAutoPlayMode`, reverse-engineered in `docs/SERVER.md`): forcing it past
 > its launcher-gated boot shows it loading the very same `AutoPlay/*.ape` into its real engine and
 > running the in-match pipeline (actors driven, per-tick + render executing) with **no server** — this
@@ -61,7 +66,8 @@ The hub links the viewers (map, mesh, textured mesh, skeleton, replay, textures,
 the WASM decrypt/decode proofs) and the **WASM Engine** — a real Emscripten program that opens a
 WebGL context and renders your maps/meshes from the same byte-exact reconstruction. Walk it with
 WASD + Q/E/Space (collision stops you at walls), look with the mouse (click to lock) or the arrow
-keys, play music, connect to the relay for multiplayer (`?map=NAME&mp`), and run the reconstructed
+keys, play music, fight other players online over the relay (`?map=NAME&mp` — F shoots, with HP /
+respawn / kill score), and run the reconstructed
 simulation with `?map=NAME&proj` — **press F to fire**. Add `&accel` for an optional momentum feel
 while walking — a local convenience, explicitly **not** a reconstruction of the original server's
 input→acceleration (which has no offline ground truth); the default movement stays the replay-verified

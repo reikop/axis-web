@@ -40,6 +40,9 @@ static float entCenter[3] = {0,0,0}, entRadius = 1.0f;
 #define MAXAV 16
 static float avatars[MAXAV * 3];
 static int avCount = 0;
+#define MAXNETSHOT 64
+static float netShots[MAXNETSHOT * 3];   /* multiplayer projectile markers (page-driven) */
+static int netShotCount = 0;
 
 /* reconstructed simulation (port/sim/) wired into the engine: run the verified
  * projectile combat sim each frame and render the live projectiles. */
@@ -259,6 +262,26 @@ EMSCRIPTEN_KEEPALIVE void engine_set_avatars(const float *xyz, int n) {
     if (n > MAXAV) n = MAXAV; if (n < 0) n = 0;
     for (int i = 0; i < n * 3; i++) avatars[i] = xyz[i];
     avCount = n;
+}
+
+/* Multiplayer combat (page-driven over the relay; see web/engine/index.html).
+ * set_shots: world positions of in-flight projectiles (local + remote) to draw as
+ *   bright markers. get_camera: out[0..2]=live camera position, out[3..5]=forward
+ *   unit vector, so the page broadcasts the real player pose and fires from the real
+ *   aim. set_campos: teleport the local player (respawn). Hit detection / HP / scoring
+ *   run page-side (peer-relayed, non-authoritative) — there is no original server. */
+EMSCRIPTEN_KEEPALIVE void engine_set_shots(const float *xyz, int n) {
+    if (n > MAXNETSHOT) n = MAXNETSHOT; if (n < 0) n = 0;
+    for (int i = 0; i < n * 3; i++) netShots[i] = xyz[i];
+    netShotCount = n;
+}
+EMSCRIPTEN_KEEPALIVE void engine_get_camera(float *out) {
+    float f[3]; camForward(f);
+    out[0] = camPos[0]; out[1] = camPos[1]; out[2] = camPos[2];
+    out[3] = f[0]; out[4] = f[1]; out[5] = f[2];
+}
+EMSCRIPTEN_KEEPALIVE void engine_set_campos(float x, float y, float z) {
+    camPos[0] = x; camPos[1] = y; camPos[2] = z;
 }
 
 /* spawn a burst of gravity debris (the verified axis_effect debris layer) at a
@@ -654,6 +677,24 @@ static void frame(void) {
                     glUniformMatrix4fv(uMVPloc, 1, GL_FALSE, mvpa); glUniformMatrix4fv(uModelloc, 1, GL_FALSE, model);
                     glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
                 }
+            }
+        }
+
+        /* multiplayer projectile markers (page-driven combat): small bright cubes */
+        if (netShotCount > 0) {
+            GLint uMVPloc = glGetUniformLocation(prog, "uMVP"), uModelloc = glGetUniformLocation(prog, "uModel");
+            float s = gRadius * 0.012f; if (s < 0.5f) s = 0.5f;
+            glUniform1i(glGetUniformLocation(prog, "uHasTex"), 0);
+            glUniform3f(glGetUniformLocation(prog, "uColor"), 1.0f, 0.95f, 0.2f);   /* tracer */
+            if (aUV >= 0) glDisableVertexAttribArray(aUV);
+            glBindBuffer(GL_ARRAY_BUFFER, vboCube);  glEnableVertexAttribArray(aPos); glVertexAttribPointer(aPos, 3, GL_FLOAT, GL_FALSE, 0, 0);
+            glBindBuffer(GL_ARRAY_BUFFER, vboCubeN); glEnableVertexAttribArray(aNrm); glVertexAttribPointer(aNrm, 3, GL_FLOAT, GL_FALSE, 0, 0);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, iboCube);
+            for (int a = 0; a < netShotCount; a++) {
+                float model[16] = { s,0,0,0, 0,s,0,0, 0,0,s,0, netShots[a*3], netShots[a*3+1], netShots[a*3+2], 1 };
+                float mvpa[16]; mat_mul(mvpa, mvp, model);
+                glUniformMatrix4fv(uMVPloc, 1, GL_FALSE, mvpa); glUniformMatrix4fv(uModelloc, 1, GL_FALSE, model);
+                glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
             }
         }
 
