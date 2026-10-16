@@ -66,8 +66,10 @@ The hub links the viewers (map, mesh, textured mesh, skeleton, replay, textures,
 the WASM decrypt/decode proofs) and the **WASM Engine** — a real Emscripten program that opens a
 WebGL context and renders your maps/meshes from the same byte-exact reconstruction. Walk it with
 WASD + Q/E/Space (collision stops you at walls), look with the mouse (click to lock) or the arrow
-keys, play music, fight other players online over the relay (`?map=NAME&mp` — F shoots, with HP /
-respawn / kill score), and run the reconstructed
+keys, play music, fight other players online over the relay (`?map=NAME&mp` — F shoots, **1–5**
+switch weapons (30mm/60mm/Energy/Missile/Rocket, named from your `Item.dat`), **Enter** to chat, with
+HP / respawn / kill-feed / scoreboard / frag-limit; weapon balance is gameplay-tuned, not original
+server stats), and run the reconstructed
 simulation with `?map=NAME&proj` — **press F to fire**. Add `&accel` for an optional momentum feel
 while walking — a local convenience, explicitly **not** a reconstruction of the original server's
 input→acceleration (which has no offline ground truth); the default movement stays the replay-verified
