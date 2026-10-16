@@ -43,6 +43,9 @@ static int avCount = 0;
 #define MAXNETSHOT 64
 static float netShots[MAXNETSHOT * 3];   /* multiplayer projectile markers (page-driven) */
 static int netShotCount = 0;
+#define MAXNETITEM 32
+static float netItems[MAXNETITEM * 3];   /* multiplayer item/pickup markers (page-driven) */
+static int netItemCount = 0;
 
 /* reconstructed simulation (port/sim/) wired into the engine: run the verified
  * projectile combat sim each frame and render the live projectiles. */
@@ -275,6 +278,11 @@ EMSCRIPTEN_KEEPALIVE void engine_set_shots(const float *xyz, int n) {
     if (n > MAXNETSHOT) n = MAXNETSHOT; if (n < 0) n = 0;
     for (int i = 0; i < n * 3; i++) netShots[i] = xyz[i];
     netShotCount = n;
+}
+EMSCRIPTEN_KEEPALIVE void engine_set_items(const float *xyz, int n) {
+    if (n > MAXNETITEM) n = MAXNETITEM; if (n < 0) n = 0;
+    for (int i = 0; i < n * 3; i++) netItems[i] = xyz[i];
+    netItemCount = n;
 }
 EMSCRIPTEN_KEEPALIVE void engine_get_camera(float *out) {
     float f[3]; camForward(f);
@@ -699,6 +707,24 @@ static void frame(void) {
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, iboCube);
             for (int a = 0; a < netShotCount; a++) {
                 float model[16] = { s,0,0,0, 0,s,0,0, 0,0,s,0, netShots[a*3], netShots[a*3+1], netShots[a*3+2], 1 };
+                float mvpa[16]; mat_mul(mvpa, mvp, model);
+                glUniformMatrix4fv(uMVPloc, 1, GL_FALSE, mvpa); glUniformMatrix4fv(uModelloc, 1, GL_FALSE, model);
+                glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
+            }
+        }
+
+        /* multiplayer item/pickup markers (page-driven): larger green cubes */
+        if (netItemCount > 0) {
+            GLint uMVPloc = glGetUniformLocation(prog, "uMVP"), uModelloc = glGetUniformLocation(prog, "uModel");
+            float s = gRadius * 0.025f; if (s < 1.0f) s = 1.0f;
+            glUniform1i(glGetUniformLocation(prog, "uHasTex"), 0);
+            glUniform3f(glGetUniformLocation(prog, "uColor"), 0.3f, 1.0f, 0.5f);   /* pickup green */
+            if (aUV >= 0) glDisableVertexAttribArray(aUV);
+            glBindBuffer(GL_ARRAY_BUFFER, vboCube);  glEnableVertexAttribArray(aPos); glVertexAttribPointer(aPos, 3, GL_FLOAT, GL_FALSE, 0, 0);
+            glBindBuffer(GL_ARRAY_BUFFER, vboCubeN); glEnableVertexAttribArray(aNrm); glVertexAttribPointer(aNrm, 3, GL_FLOAT, GL_FALSE, 0, 0);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, iboCube);
+            for (int a = 0; a < netItemCount; a++) {
+                float model[16] = { s,0,0,0, 0,s,0,0, 0,0,s,0, netItems[a*3], netItems[a*3+1], netItems[a*3+2], 1 };
                 float mvpa[16]; mat_mul(mvpa, mvp, model);
                 glUniformMatrix4fv(uMVPloc, 1, GL_FALSE, mvpa); glUniformMatrix4fv(uModelloc, 1, GL_FALSE, model);
                 glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);

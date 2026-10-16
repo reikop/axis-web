@@ -107,6 +107,13 @@
     const FRAG = 20;          // frag limit -> win
     const latest = {};        // remote positions (const-velocity dead-reckoned, SPEC §5)
     const projs = [];         // network projectiles: {owner,x,y,z,dx,dy,dz,age,local,dead}
+    const itemPtr = M.ccall('engine_alloc', 'number', ['number'], [32 * 3 * 4]);
+    let ampUntil = 0;         // damage-amplifier expiry (ms)
+    // item pickups (names from Item.dat: drug\* shields, Special\damageamp). Shields restore HP,
+    // amp doubles damage for 8s. Positions derive from map bounds so all clients see the same layout.
+    const ITEMS = [];
+    for (let i = 0; i < 6; i++) { const a = i / 6 * 6.283, rr = radius * 0.55; ITEMS.push({ type: i % 2, x: center[0] + Math.cos(a) * rr, y: center[1] + radius * 0.06, z: center[2] + Math.sin(a) * rr, alive: true, respawnAt: 0 }); }
+    const IRAD = radius * 0.09;   // pickup reach
     let ws = null;
 
     function readCam() { M.ccall('engine_get_camera', null, ['number'], [camPtr]); return new Float32Array(M.HEAPU8.buffer, camPtr, 6); }
@@ -121,11 +128,13 @@
       const rows = Object.keys(board).map(a => ({ a: +a, k: board[a].k, d: board[a].d }))
         .sort((x, y) => y.k - x.k)
         .map(r => `${r.a === mySlot ? '<b>' : ''}P${r.a}${r.a === mySlot ? ' (you)' : ''}: ${r.k}/${r.d}${r.a === mySlot ? '</b>' : ''}`).join(' &middot; ');
-      const inv = performance.now() - respawnT < 2000 ? ' &middot; <span style="color:#8fd9ff">SPAWN</span>' : '';
+      const nowh = performance.now();
+      const inv = nowh - respawnT < 2000 ? ' &middot; <span style="color:#8fd9ff">SPAWN</span>' : '';
+      const amp = nowh < ampUntil ? ' &middot; <span style="color:#ffb3f0">AMP ' + Math.ceil((ampUntil - nowh) / 1000) + 's</span>' : '';
       const fl = feed.slice(-3).map(f => `P${f.killer} &#9654; P${f.victim}`).join(' &middot; ');
       h.style.display = 'block';
       h.innerHTML = (win >= 0 ? `<b style="color:#ffd24a">${win === mySlot ? 'YOU WIN' : 'P' + win + ' WINS'}</b> &middot; ` : '')
-        + `HP <b style="color:${hp > 35 ? '#8fd98f' : '#e88'}">${Math.max(0, hp | 0)}</b>${inv} &middot; <b style="color:#cfe3ff">${WEAPONS[curWeap].name}</b> <span style="opacity:.6;font-size:11px">[1-5]</span> &middot; ${rows}`
+        + `HP <b style="color:${hp > 35 ? '#8fd98f' : '#e88'}">${Math.max(0, hp | 0)}</b>${inv}${amp} &middot; <b style="color:#cfe3ff">${WEAPONS[curWeap].name}</b> <span style="opacity:.6;font-size:11px">[1-5]</span> &middot; ${rows}`
         + (fl ? `<br><span style="opacity:.8;font-size:12px">${fl}</span>` : '');
     }
 
@@ -135,7 +144,7 @@
       if (now - lastFireT < W.rate) return;            // per-weapon cooldown
       lastFireT = now;
       const c = readCam();
-      projs.push({ owner: mySlot, x: c[0], y: c[1], z: c[2], dx: c[3], dy: c[4], dz: c[5], age: 0, local: true, dead: false, speed: radius * W.spd, dmg: W.dmg });
+      projs.push({ owner: mySlot, x: c[0], y: c[1], z: c[2], dx: c[3], dy: c[4], dz: c[5], age: 0, local: true, dead: false, speed: radius * W.spd, dmg: W.dmg * (now < ampUntil ? 2 : 1) });
       const m = mkMsg(0x20), dv = new DataView(m.buffer); m[4] = mySlot; m[6] = curWeap;   // weapon id -> remote projectile speed
       dv.setFloat32(8, c[0], true); dv.setFloat32(12, c[1], true); dv.setFloat32(16, c[2], true);
       dv.setFloat32(20, c[3], true); dv.setFloat32(24, c[4], true); dv.setFloat32(28, c[5], true);
@@ -190,6 +199,26 @@
       const f = new Float32Array(M.HEAPU8.buffer, avPtr, 16 * 3); let n = 0;
       for (const k of Object.keys(latest)) { if (+k === mySlot || n >= 16) continue; const rp = remotePos(+k); if (!rp) continue; f[n*3]=rp[0]; f[n*3+1]=rp[1]; f[n*3+2]=rp[2]; n++; }
       M.ccall('engine_set_avatars', null, ['number', 'number'], [avPtr, n]);
+      // item pickups: respawn due items, grab any within reach, render the live ones
+      const tnow = performance.now();
+      for (const it of ITEMS) if (!it.alive && tnow >= it.respawnAt) it.alive = true;
+      if (mySlot >= 0) {
+        const c = readCam();
+        for (let i = 0; i < ITEMS.length; i++) {
+          const it = ITEMS[i]; if (!it.alive) continue;
+          const dx = it.x - c[0], dy = it.y - c[1], dz = it.z - c[2];
+          if (dx*dx + dy*dy + dz*dz < IRAD*IRAD) {
+            if (it.type === 0) hp = Math.min(150, hp + 50); else ampUntil = tnow + 8000;
+            it.alive = false; it.respawnAt = tnow + 12000;
+            const m = mkMsg(0x25); m[4] = mySlot; m[6] = i; send(m);
+            if (window.__playSfx) window.__playSfx('pickup');
+            console.log('mp:pickup ' + (it.type === 0 ? 'shield -> hp ' + hp : 'amp 8s'));
+          }
+        }
+      }
+      const itf = new Float32Array(M.HEAPU8.buffer, itemPtr, 32 * 3); let ni = 0;
+      for (const it of ITEMS) { if (!it.alive || ni >= 32) continue; itf[ni*3]=it.x; itf[ni*3+1]=it.y; itf[ni*3+2]=it.z; ni++; }
+      M.ccall('engine_set_items', null, ['number', 'number'], [itemPtr, ni]);
       requestAnimationFrame(tick);
     }
     requestAnimationFrame(tick);
@@ -208,6 +237,7 @@
       else if (t === 0x22) { const victim = pay[4], killer = pay[5]; feed.push({ killer, victim }); if (feed.length > 6) feed.shift(); if (killer === mySlot && victim !== mySlot) { kills++; console.log('mp:kill of ' + victim + ' -> kills ' + kills); } hud(); }
       else if (t === 0x23) { board[d[4]] = { k: dv.getInt32(8, true), d: dv.getInt32(12, true) }; }   // peer stats
       else if (t === 0x24) { let end = 8; while (end < 64 && pay[end] !== 0) end++; try { const tx = new TextDecoder().decode(pay.subarray(8, end)); addChat(d[4], tx); console.log('mp:chat P' + d[4] + ': ' + tx); } catch (e) {} }   // chat
+      else if (t === 0x25) { const idx = pay[6]; if (ITEMS[idx]) { ITEMS[idx].alive = false; ITEMS[idx].respawnAt = performance.now() + 12000; console.log('mp:item ' + idx + ' taken by P' + d[4]); } }   // a peer grabbed an item
     };
     ws.onopen = () => {
       setInterval(() => { if (ws.readyState === 1 && mySlot >= 0) { const c = readCam(); send(codec.encodeState({ actor: mySlot, x: c[0], y: c[1], z: c[2], yaw: 0 })); } }, 120);
