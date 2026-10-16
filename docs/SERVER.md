@@ -73,11 +73,19 @@ dispatcher, SPEC §4), the `.ape` bytes being fed into the ring by `FUN_004612b0
    3 → 4 → 5 → 6 → 8`, after which the mode advanced to **4 (playback)** and stayed there, state
    `9999`, **stable for 30+ s**. So a real recorded match loaded into the real engine with **no
    server and no launcher**.
-4. The window still shows the boot splash: toggling `DAT_0067febc` on/off changed nothing, so the
-   **"INITIALIZING NETSPHERE" splash is drawn by an independent presentation path** (the WinMain
-   render loop / boot layer), not gated by these sentinels. The replay **logic** runs; the **visible
-   render handoff** (splash → game renderer) is the one remaining native-only piece, and it belongs
-   to the same boot-completion the launcher would drive.
+4. **The match actually plays** — hooking the in-game apply dispatcher `FUN_0048bca0` during mode-4
+   playback shows it called **~45×/s** with real `.ape` frames (type bytes 0/1/2 — the same in-game
+   protocol as SPEC §4), i.e. the recorded actors are being driven by the recorded data through the
+   real in-game pipeline; `FUN_00487380` (playback) and `wglSwapBuffers` run every frame (~230 fps),
+   both climbing steadily. So this is a **live in-match replay executing with no server** — not just a
+   loader that reached a terminal state. (`FUN_004a7ab0`, the loader-phase drain, is **not** used in
+   mode 4; playback sources frames by its own path but still routes them through `FUN_0048bca0`.)
+5. The window nonetheless shows the boot/wait overlay: toggling `DAT_0067febc` changed nothing and
+   `wglSwapBuffers` fires every frame, so the on-screen image is a **camera/overlay presentation
+   state** drawn over the running scene, independent of the scene-state sentinels — the WinMain boot
+   layer, which hands off only on the launcher's boot-completion. The replay **logic + actor drive +
+   render + present all run**; only the visible camera/overlay for `AXIS.EXE` is unresolved, and it
+   is not needed by the web port, which renders the same `.ape` data itself.
 
 ### What this means for the boundary
 
