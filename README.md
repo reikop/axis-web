@@ -77,7 +77,10 @@ mutex/named-pipe/file IPC and **no** dialog — the client simply sits at the se
 only connects once a server is picked in its UI. So the three reasonable offline routes (static layout
 from the file, a runtime trace, and satisfying a local init dependency) are all tried and insufficient;
 reaching the in-match scene would require reimplementing the full lobby+game server, a separate project.
-Nothing here is guess-filled — see `docs/SPEC.md` §2.10 / §5 for the measurements.
+Nothing here is guess-filled — see `docs/SPEC.md` §2.10 / §5 for the measurements, and
+`docs/SERVER.md` for the full reverse-engineering of the online path (the two-process
+launcher + NetSphere architecture, the mapped lobby/connect handshake, and what a private-server
+reimplementation would take).
 
 ### The per-tick simulation (reconstructed, verified, wired)
 
