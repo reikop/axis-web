@@ -31,6 +31,18 @@ cannot be observed offline, and neither can the authoritative input→accelerati
 **Closing this is a server-emulator-scale project**: reimplement the launcher handoff + a
 protocol-correct lobby/game server, not merely a game-packet relay.
 
+### No internal init loop to patch — the client is event-blocked (thread dump)
+
+Enumerating the client's threads at the splash (Frida `Process.enumerateThreads`) shows **all 18
+threads parked in OS wait syscalls** — `ntdll` `NtWaitForSingleObject`/`NtWaitForMultipleObjects`/
+`NtDelayExecution` and `win32u` message-waits — with **no thread executing any `AXIS.EXE` code**,
+and PCs unchanged across samples. So the boot stall is **not** a spinning state machine with a flag
+to flip: the client is fully idle, blocked on events/messages that never arrive. Advancing it means
+*posting the exact handoff signal the launcher would* (which event handle / window message), i.e.
+reversing and reimplementing `AxisPlay.exe`'s signaling — not a one-byte patch. (A string search for
+`netsphere`/`initializing`/`axisplay` also returns nothing: the splash is a texture, so there is no
+init-state string to anchor on either.)
+
 ## What is already mapped (the in-game wire protocol — fully reversed)
 
 Once a client is in a match the wire format is **completely** reverse-engineered and reimplemented
