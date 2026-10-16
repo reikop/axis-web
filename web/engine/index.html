@@ -78,7 +78,9 @@
   // (crypt.js encodeState/decodeState, the same bytes the game sends). This is the
   // WASM engine itself speaking the mapped §4 protocol, not an ad-hoc format.
   async function startMultiplayer(M, param) {
-    const url = (param && /^wss?:\/\//.test(param)) ? param : 'ws://127.0.0.1:8140';
+    const room = ((new URLSearchParams(location.search)).get('room') || 'lobby').slice(0, 24) || 'lobby';
+    let url = (param && /^wss?:\/\//.test(param)) ? param : 'ws://127.0.0.1:8140';
+    url += (url.includes('?') ? '&' : '?') + 'room=' + encodeURIComponent(room);
     let codec; try { codec = await window.AXISCrypt.load(); } catch (e) { statusEl.textContent = 'mp codec load failed'; return; }
     // scene bounds -> hit radius + respawn placement
     const bptr = M.ccall('engine_alloc', 'number', ['number'], [16]);
@@ -228,7 +230,7 @@
     ws.binaryType = 'arraybuffer';
     ws.onmessage = (ev) => {
       const d = new Uint8Array(ev.data);
-      if (d.length === 2 && d[0] === 0xff) { mySlot = d[1]; statusEl.textContent = `online: slot ${mySlot} on ${url} — WASD move, click to aim, F to fire (peer-relayed combat)`; return; }
+      if (d.length === 2 && d[0] === 0xff) { mySlot = d[1]; statusEl.textContent = `online: room "${room}" slot ${mySlot} — WASD move, click to aim, F fire, 1-5 weapon, Enter chat (peer-relayed PvP)`; return; }
       if (d.length !== 69) return;
       const pay = d.subarray(5, 69), t = pay[1], dv = new DataView(pay.buffer, pay.byteOffset, 64);
       if (t === 0) { const s = codec.decodeState(pay); onPacket(s.actor, [s.x, s.y, s.z]); }
@@ -321,6 +323,12 @@
         <button id="play" ${maps.length ? '' : 'disabled'} style="background:#24405f;color:#dbeafe;border:1px solid #2f5a86;border-radius:6px;padding:8px 16px;cursor:pointer;font-weight:600">&#9654; Play (walk + simulation)</button>
         <button id="walk" ${maps.length ? '' : 'disabled'} style="background:#1b2026;color:#cdd3da;border:1px solid #2a3139;border-radius:6px;padding:8px 16px;cursor:pointer">Walk only</button>
       </div>
+      <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <label style="color:#9aa3ad">Online room</label>
+        <input id="roomin" value="lobby" maxlength="24" style="background:#1b2026;color:#cdd3da;border:1px solid #2a3139;border-radius:6px;padding:6px 10px;width:150px">
+        <button id="joinmp" ${maps.length ? '' : 'disabled'} style="background:#2f5a3a;color:#dbf3df;border:1px solid #3f7a52;border-radius:6px;padding:8px 16px;cursor:pointer;font-weight:600">&#9654; Join online (PvP)</button>
+        <span style="color:#6a727c;font-size:12px">needs <code>node server/relay.js</code></span>
+      </div>
       ${reps.length ? `<div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <label style="color:#9aa3ad">Recorded match</label>
         <select id="repsel" style="background:#1b2026;color:#cdd3da;border:1px solid #2a3139;border-radius:6px;padding:6px 10px">${reps.map(r => `<option value="${r}">${r}</option>`).join('')}</select>
@@ -329,7 +337,8 @@
       <div style="margin-top:14px;color:#6a727c;font-size:12px;line-height:1.7">
         <b style="color:#9aa3ad">Controls</b><br>
         W A S D &mdash; move (stops at walls) &middot; Q / E / Space &mdash; down / up &middot; Shift &mdash; sprint<br>
-        Mouse (click to lock) or arrows / I J K L &mdash; look &middot; <b style="color:#9aa3ad">F</b> &mdash; fire &middot; Esc &mdash; release mouse
+        Mouse (click to lock) or arrows / I J K L &mdash; look &middot; <b style="color:#9aa3ad">F</b> &mdash; fire &middot; Esc &mdash; release mouse<br>
+        Online: <b style="color:#9aa3ad">1&ndash;5</b> weapons &middot; <b style="color:#9aa3ad">Enter</b> chat &middot; <b style="color:#9aa3ad">G</b> momentum feel
       </div>`;
     wrap.insertBefore(menu, wrap.firstChild);
     canvas.style.display = 'none'; document.getElementById('row').style.display = 'none';
@@ -338,6 +347,8 @@
     if (pb) pb.onclick = () => go('&proj');
     if (wb) wb.onclick = () => go('');
     if (rb) rb.onclick = () => go('&replay=' + encodeURIComponent(document.getElementById('repsel').value));
+    const jb = document.getElementById('joinmp');
+    if (jb) jb.onclick = () => go('&mp&room=' + encodeURIComponent((document.getElementById('roomin').value || 'lobby').trim() || 'lobby'));
   }
 
   // Real game sound effects from the user's own Sound/ (Web Audio): a homing-missile

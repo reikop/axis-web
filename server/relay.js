@@ -19,13 +19,15 @@
 'use strict';
 const http = require('http');
 const crypto = require('crypto');
+const url = require('url');
 
 const PORT = parseInt(process.argv[2] || '8140', 10);
 const PAYLOAD = 0x40;                 // 64-byte player-action payload (SPEC §4)
 const MAX_PLAYERS = 16;               // AXIS iterates 0x10 actor slots
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
-const clients = new Map();            // actorId -> { socket, alive }
+const rooms = new Map();              // room name -> Map(actorId -> { socket })
+function getRoom(name) { let r = rooms.get(name); if (!r) { r = new Map(); rooms.set(name, r); } return r; }
 let tick = 0;
 
 function accept(key) {
@@ -43,19 +45,19 @@ function wsFrame(payload) {           // server->client binary frame (unmasked)
 
 function send(sock, payload) { try { sock.write(wsFrame(payload)); } catch (e) {} }
 
-function firstFreeSlot() {
-  for (let i = 0; i < MAX_PLAYERS; i++) if (!clients.has(i)) return i;
+function firstFreeSlot(room) {
+  for (let i = 0; i < MAX_PLAYERS; i++) if (!room.has(i)) return i;
   return -1;
 }
 
-// relay one 64-byte player payload from `fromId` to everyone else, framed as
-// [u32 tick][u8 actor][payload...] so the client can order and attribute it.
-function relay(fromId, payload) {
+// relay one 64-byte player payload from `fromId` to the other clients IN THE SAME
+// ROOM, framed as [u32 tick][u8 actor][payload...] so the client can order + attribute it.
+function relay(room, fromId, payload) {
   const frame = Buffer.alloc(5 + payload.length);
   frame.writeUInt32LE(tick++, 0);
   frame.writeUInt8(fromId, 4);
   payload.copy(frame, 5);
-  for (const [id, c] of clients) if (id !== fromId) send(c.socket, frame);
+  for (const [id, c] of room) if (id !== fromId) send(c.socket, frame);
 }
 
 function parseFrames(buf, onMsg) {     // minimal client->server frame parser
@@ -87,10 +89,14 @@ server.on('upgrade', (req, socket) => {
     'Upgrade: websocket\r\nConnection: Upgrade\r\n' +
     'Sec-WebSocket-Accept: ' + accept(key) + '\r\n\r\n');
 
-  const id = firstFreeSlot();
+  // a client picks its room via ?room=NAME on the WebSocket URL (default "lobby");
+  // slots and relaying are per-room, so each room is an independent match.
+  const roomName = ((url.parse(req.url, true).query.room) || 'lobby').toString().slice(0, 32) || 'lobby';
+  const room = getRoom(roomName);
+  const id = firstFreeSlot(room);
   if (id < 0) { socket.destroy(); return; }
-  clients.set(id, { socket });
-  console.log(`+ player ${id} joined (${clients.size}/${MAX_PLAYERS})`);
+  room.set(id, { socket });
+  console.log(`+ ${roomName}#${id} joined (${room.size}/${MAX_PLAYERS})`);
   // tell the client its assigned actor slot: [0xFF][actorId]
   send(socket, Buffer.from([0xff, id]));
 
@@ -99,12 +105,12 @@ server.on('upgrade', (req, socket) => {
     acc = Buffer.concat([acc, chunk]);
     const r = parseFrames(acc, (data) => {
       // accept the fixed 64-byte payload (ignore anything malformed)
-      if (data.length === PAYLOAD) relay(id, data);
+      if (data.length === PAYLOAD) relay(room, id, data);   // relay within the room only
     });
     acc = r.rest;
     if (r.closed) socket.end();
   });
-  const bye = () => { if (clients.delete(id)) console.log(`- player ${id} left (${clients.size}/${MAX_PLAYERS})`); };
+  const bye = () => { if (room.delete(id)) { console.log(`- ${roomName}#${id} left (${room.size}/${MAX_PLAYERS})`); if (room.size === 0) rooms.delete(roomName); } };
   socket.on('close', bye); socket.on('error', bye);
 });
 
