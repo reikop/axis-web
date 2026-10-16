@@ -117,6 +117,28 @@ builder** (an animated water/effect surface, using `0x466c60` to sweep a 4-point
 3600 floats. This is how the engine applies all rotations (procedural meshes and skeletal bones alike);
 the same `(&DAT_00a19408)[idx mod 3600]` LUT read appears in `FUN_00471e30`.
 
+### Static analysis of the render path's bone/orientation math (no runtime gate needed)
+
+Statically reading `FUN_00497d70`'s `FUN_00466c60` call sites (xrefs at `0x498fd4`/`0x498fea`/`0x499001`
+and the `0x49a7xx`/`0x49afxx`/`0x49b3xx+` clusters) resolves what those rotations are — and it is **model
+orientation from actor state, not time-indexed keyframe interpolation**:
+
+- A `switch` on a discrete direction/pose code (`0x110`/`1`/`0x10`/`0xf1`/`0x1000`…) pushes **fixed
+  45°-step angles** (−3150/−900/−2700/−450/−1350/−2250/−1800 tenths-deg = −315°/−90°/−270°/−45°/−135°/
+  −225°/−180°) into `FUN_00466c60(axis=2, angle)` — an **8-direction billboard facing** rotation about Z.
+- Then it loads per-actor **pitch/yaw** floats at `[base+0x233ca28]` / `[base+0x233ca2c]`, rounds them with
+  `FUN_0049e274` (= `__ftol`, VS library) to the integer tenths-of-degree LUT index, and rotates. These
+  angles are the actor's networked orientation (type-0 state; yaw byte ×14.0625 per SPEC §4), **not**
+  keyframes read from the skeleton file by a time cursor.
+
+So in the reachable render path there is **no per-key stride/time-base keyframe sampler**: model posing is
+**orientation-from-state** (billboard facing + pitch/yaw in tenths-of-degree via the sin/cos LUTs), which
+is exactly what the web port's replay already does (it orients `.ape` actors by their state). The earlier
+framing of a missing "animation keyframe sampler" is, for this path, resolved to orientation-from-state;
+whether AXIS has a *separate* skeletal-keyframe subsystem for some models (the `.shp`/skeleton files are
+decoded) is not exercised here and remains the only open animation question — a fidelity detail, not a
+blocker for the offline port.
+
 **Honest status of the character skeleton keyframe sampler — still gated (correcting the earlier
 "now observable" claim):** the **character** per-bone keyframe sampler was **not** among the hot callees
 in the forced-playback state. What runs is procedural-mesh + camera/projection + matrix/normalize
