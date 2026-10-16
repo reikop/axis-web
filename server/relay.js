@@ -19,7 +19,6 @@
 'use strict';
 const http = require('http');
 const crypto = require('crypto');
-const url = require('url');
 
 const PORT = parseInt(process.argv[2] || '8140', 10);
 const PAYLOAD = 0x40;                 // 64-byte player-action payload (SPEC §4)
@@ -91,7 +90,8 @@ server.on('upgrade', (req, socket) => {
 
   // a client picks its room via ?room=NAME on the WebSocket URL (default "lobby");
   // slots and relaying are per-room, so each room is an independent match.
-  const roomName = ((url.parse(req.url, true).query.room) || 'lobby').toString().slice(0, 32) || 'lobby';
+  let roomName = 'lobby';
+  try { roomName = (new URL(req.url, 'http://localhost').searchParams.get('room') || 'lobby').slice(0, 32) || 'lobby'; } catch (e) {}
   const room = getRoom(roomName);
   const id = firstFreeSlot(room);
   if (id < 0) { socket.destroy(); return; }
@@ -101,16 +101,18 @@ server.on('upgrade', (req, socket) => {
   send(socket, Buffer.from([0xff, id]));
 
   let acc = Buffer.alloc(0);
+  let rate = 0;                                            // basic flood protection:
+  const rateTimer = setInterval(() => { rate = 0; }, 1000); // cap relayed frames/sec/client
   socket.on('data', (chunk) => {
     acc = Buffer.concat([acc, chunk]);
     const r = parseFrames(acc, (data) => {
-      // accept the fixed 64-byte payload (ignore anything malformed)
-      if (data.length === PAYLOAD) relay(room, id, data);   // relay within the room only
+      // accept the fixed 64-byte payload (ignore anything malformed), rate-limited
+      if (data.length === PAYLOAD && ++rate <= 150) relay(room, id, data);   // relay within the room only
     });
     acc = r.rest;
     if (r.closed) socket.end();
   });
-  const bye = () => { if (room.delete(id)) { console.log(`- ${roomName}#${id} left (${room.size}/${MAX_PLAYERS})`); if (room.size === 0) rooms.delete(roomName); } };
+  const bye = () => { clearInterval(rateTimer); if (room.delete(id)) { console.log(`- ${roomName}#${id} left (${room.size}/${MAX_PLAYERS})`); if (room.size === 0) rooms.delete(roomName); } };
   socket.on('close', bye); socket.on('error', bye);
 });
 
