@@ -41,7 +41,11 @@ to flip: the client is fully idle, blocked on events/messages that never arrive.
 *posting the exact handoff signal the launcher would* (which event handle / window message), i.e.
 reversing and reimplementing `AxisPlay.exe`'s signaling — not a one-byte patch. (A string search for
 `netsphere`/`initializing`/`axisplay` also returns nothing: the splash is a texture, so there is no
-init-state string to anchor on either.)
+init-state string to anchor on either.) A direct intervention was also tried and measured
+insufficient: force-pulsing `SetEvent` on all nine Events the client waits on (40× over 4 s) left it
+**still on the splash, unchanged** (and did not crash) — so the init is not gated on a bare event that
+can be nudged; it needs the real launcher-provided handoff data/connection, confirming the dependency
+is content, not just signalling.
 
 The handoff is also **not** a named-IPC signal that could be spoofed from outside: hooking the wait
 APIs and resolving every waited-on handle with `NtQueryObject` (type + name; note the 32-bit
