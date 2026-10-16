@@ -92,6 +92,23 @@ offline (see `docs/SPEC.md` §4, `web/crypt.js`, `server/relay.js`, `tools/parse
 So a server that is already *in a match* with a client speaks a known language — recorded matches
 (`AutoPlay/*.ape`) are exactly this traffic and already replay in the engine.
 
+## Is there an offline skirmish/host path? No standalone one in the client (checked)
+
+`initdata\axis.cfg` (plaintext) is a full client config and includes a **host/skirmish block** —
+`set_server name Kalimdor`, `set_server map 5`, `set_server numofplayer 16`, `set_server type DEATH
+MATCH`, `set_server gameflag/timeflag` — alongside `set_player`, `set_graphic`, `set_sound` and the
+in-match keybindings, and `initdata\` also has `skirmish.dat` + `profeng/profkor.dat` (profiles). So a
+**local skirmish / host mode exists** at the product level, which would reach an in-match state
+without NetSphere. But it does **not** give `AXIS.EXE` a standalone entry: the renderer does **no
+networking** (so it cannot itself host a server), and a string search of `AXIS.EXE` for
+`skirmish`/`deathmatch`/`set_server`/`host` finds **nothing** — the host/skirmish setup and those
+config keys live in **`AxisPlay.exe`**. So even offline skirmish is launcher-hosted (AxisPlay runs the
+local server + bots and feeds `AXIS.EXE` via the same memory injection); it is the same launcher
+dependency, not a client-only offline match. Reaching in-match offline therefore still requires the
+AxisPlay reimplementation — but note it need **not** involve a live backend for skirmish, which makes
+a local-skirmish-hosting AxisPlay emulator the most plausible future route to exercising the in-match
+simulation.
+
 ## The transport is in-process buffers, not a socket (recv reversed)
 
 `FUN_004a7ab0` (the packet drain the net tick calls) makes **no Winsock calls** — consistent with the
