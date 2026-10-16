@@ -30,7 +30,11 @@ WebSocket platform shim (approach B — see `port/README.md`).
 > engine renders real maps (e.g. Metropolis, 118 objects), the reconstructed simulation runs live
 > (`?map=NAME&proj` — projectiles, gravity debris, pickups, destruction counter), and the **3D replay**
 > plays a real recorded 2005 match (`Autoplay001.ape`: players *k'*, *OneShotOneKill*, *onlynike* over
-> Metropolis) — all with **zero page errors**. The original client has the same offline playback built
+> Metropolis) — all with **zero page errors**. **Online multiplayer was verified end-to-end the same
+> way**: against a running `server/relay.js` and a second peer, a browser client (`?map=NAME&mp`)
+> connects, is assigned a slot, and exchanges real-protocol 64-byte state frames **bidirectionally** —
+> the peer decoded the browser's state byte-exactly through the `crypt.js` codec, and the browser
+> received the peer's relayed frames, at the game's ~120 ms cadence. The original client has the same offline playback built
 > in (its attract-mode `processAutoPlayMode`, reverse-engineered in `docs/SERVER.md`): forcing it past
 > its launcher-gated boot shows it loading the very same `AutoPlay/*.ape` into its real engine and
 > running the in-match pipeline (actors driven, per-tick + render executing) with **no server** — this
