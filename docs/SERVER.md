@@ -44,10 +44,14 @@ reversing and reimplementing `AxisPlay.exe`'s signaling — not a one-byte patch
 init-state string to anchor on either.)
 
 The handoff is also **not** a named-IPC signal that could be spoofed from outside: hooking the wait
-APIs and resolving every waited-on handle with `NtQueryObject(ObjectNameInformation)` shows the
-client blocks on **13 distinct handles, all anonymous (0 named)**, and over the window it creates/
-opens **no** named event, mutex or file-mapping (`CreateEventW`/`OpenEventW`/`CreateMutexW`/
-`OpenMutexW`/`CreateFileMappingW`/`OpenFileMappingW` all unseen). So the launcher passes the client
+APIs and resolving every waited-on handle with `NtQueryObject` (type + name; note the 32-bit
+`UNICODE_STRING.Buffer` is at offset +4) shows the client blocks on **13 distinct handles — 9 Events,
+2 Mutexes, 2 Semaphores — all anonymous except one named mutex, a `…\DirectSound Administrator shared
+thread array` lock (the audio subsystem, unrelated to the launcher)**. It also creates/opens **no**
+named event, mutex or file-mapping (`CreateEventW`/`OpenEventW`/`CreateMutexW`/`OpenMutexW`/
+`CreateFileMappingW`/`OpenFileMappingW` all unseen). So the waits are on internal anonymous sync
+objects (set by work the handoff would drive), with no launcher-named object to signal. The launcher
+passes the client
 **anonymous/inherited handles at `CreateProcess` time** (the usual socket-/event-handle inheritance
 pattern), which a standalone launch never receives. Emulating it therefore requires actually
 reimplementing `AxisPlay.exe`'s process-launch + handle-passing (and then the backend it hands off),
