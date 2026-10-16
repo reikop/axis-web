@@ -249,7 +249,7 @@
       }
       for (let i = projs.length - 1; i >= 0; i--) if (projs[i].dead || projs[i].age > PLIFE) projs.splice(i, 1);
       const sf = new Float32Array(M.HEAPU8.buffer, shotPtr, 64 * 3); let ns = 0;
-      for (const p of projs) { if (ns >= 64) break; sf[ns*3]=p.x; sf[ns*3+1]=p.y; sf[ns*3+2]=p.z; ns++; }
+      for (const p of projs) { const sp = p.speed || PSPEED; for (let tr = 0; tr < 3 && ns < 64; tr++) { const b = sp * 0.03 * tr; sf[ns*3]=p.x-p.dx*b; sf[ns*3+1]=p.y-p.dy*b; sf[ns*3+2]=p.z-p.dz*b; ns++; } }   // head + short tail = tracer
       M.ccall('engine_set_shots', null, ['number', 'number'], [shotPtr, ns]);
       const f = new Float32Array(M.HEAPU8.buffer, avPtr, 16 * 3); let n = 0;
       for (const k of Object.keys(latest)) { if (+k === mySlot || n >= 16) continue; const rp = remotePos(+k); if (!rp) continue; f[n*3]=rp[0]; f[n*3+1]=rp[1]; f[n*3+2]=rp[2]; n++; }
