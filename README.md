@@ -67,20 +67,22 @@ the game's data directory is ever committed (see `.gitignore`: `*.dat`, `*.bfd`,
 
 ### The boundary — what isn't included, and why (measured)
 
-Two client pieces are **not** reconstructed: the authoritative **input → acceleration** transfer, and
-the skeleton **animation keyframe sampler** (the per-key stride/time-base isn't in the file). Both run
-only in a live match, and the 2005 servers are gone — and this is **measured, not assumed**. Running
-`AXIS.EXE` (server-select gate bypassed) under Frida shows the process rendering hard
-(`wglSwapBuffers` ~480×/s) while the per-tick animation timer, the model/anim update and the network
-tick execute **0 times**; a second pass shows **no** `connect`/`recv`/`gethostbyname`, **no**
-mutex/named-pipe/file IPC and **no** dialog — the client simply sits at the server-select screen and
-only connects once a server is picked in its UI. So the three reasonable offline routes (static layout
-from the file, a runtime trace, and satisfying a local init dependency) are all tried and insufficient;
-reaching the in-match scene would require reimplementing the full lobby+game server, a separate project.
-Nothing here is guess-filled — see `docs/SPEC.md` §2.10 / §5 for the measurements, and
-`docs/SERVER.md` for the full reverse-engineering of the online path (the two-process
-launcher + NetSphere architecture, the mapped lobby/connect handshake, and what a private-server
-reimplementation would take).
+Two client pieces are **not** reconstructed from a *live* match: the authoritative **input →
+acceleration** transfer, and the skeleton **animation keyframe sampler** (the per-key stride/time-base
+isn't in the file). Both run only in a live match, and the 2005 servers are gone — this is **measured,
+not assumed**. But the in-match *data* is **not** out of reach offline: AXIS has a **built-in,
+server-free, in-engine AutoPlay replay path**, and running `AXIS.EXE` under Frida (2026-10-16) shows
+its **logic runs end-to-end offline** — forcing the scene-state sentinel to "ready" and pointing its
+loader at `AutoPlay/Autoplay001.ape` makes `processAutoPlayMode` open the file (version `0x1201`, map
+13) and run the full load pipeline (ground → objects → collision → battlefield → actors) into the real
+engine, then enter playback mode and hold. The one native-only piece left for on-screen pixels in
+`AXIS.EXE` is the boot-splash → game-renderer presentation handoff (a separate subsystem tied to the
+absent launcher). **The web port doesn't need it** — it decodes and renders the same `.ape` replays
+itself (`web/ape.js` + the engine replay mode), so it already does what the native AutoPlay path does,
+visibly. What still needs a live server is only **interactive** play's input→acceleration transfer
+(replay reads positions from the file). See `docs/SERVER.md` (headline section) for the full mapping —
+the state machine, the game-object base pointer, `processAutoPlayMode`, and the live Frida trace — and
+`docs/SPEC.md` §2.10 / §5 for the simulation/animation measurements.
 
 ### The per-tick simulation (reconstructed, verified, wired)
 

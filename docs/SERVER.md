@@ -2,13 +2,97 @@
 
 The offline port (see the top-level `README.md`) is complete for everything that runs
 client-side without a live match. This document consolidates the reverse-engineering of the
-**online path** — why the original client can't reach an in-match state offline, and the exact
+**online path**. The headline finding (first section below) is that the client has a **built-in,
+server-free, in-engine AutoPlay replay path whose logic runs fully offline**; the rest maps the
+**live** online path — why an *interactive* match needs the launcher + a server, and the exact
 entry points a private-server / launcher reimplementation would need. It is a map for a future
 project, not a working server. All addresses are static (image base `0x400000`, no ASLR, so
 static = runtime). Everything here was read from the client or measured at runtime with Frida;
 nothing is guessed.
 
-## Why in-match is unreachable offline (measured root cause)
+## BREAKTHROUGH: offline in-engine AutoPlay replay runs without a server (measured 2026-10-16)
+
+The earlier conclusion below ("in-match is unreachable offline, needs a full launcher + server
+emulator") is **partly overturned**. AXIS has a **built-in, server-free, in-engine AutoPlay /
+attract-demo path** that loads a real recorded match from `AutoPlay/*.ape` straight into the full
+3D engine. On this install its **game logic executes end-to-end offline** — the only thing between
+it and visible pixels is the boot-splash *presentation* layer (still tied to the launcher boot
+completion). This is exactly the mechanism the web port's replay feature reproduces — and the web
+port actually **renders** it, which the gated native client does not do offline.
+
+### The main-loop state machine (mapped + verified live)
+
+`FUN_0041fc00` (the per-frame game tick) is the gate:
+
+```c
+if (DAT_0076e398 != 9999) { FUN_0041f460(); return; }   // boot/splash state handler
+if (DAT_0067febc != 9999)   FUN_0041f390();             // (secondary transition)
+if (DAT_0068134c == 0)    { FUN_004450c0(); FUN_00401030(); }  // one-time init
+ECX = *(void**)0x00909764;                              // <-- game-object base pointer
+FUN_00461440(ECX);                                      // mode dispatcher
+```
+
+- **`DAT_0076e398` @ `0x76e398`** is the master scene-state sentinel; **9999 = "ready"**. At the
+  splash it sits at **200**. `DAT_0067febc` @ `0x67febc` is a secondary sentinel.
+- **The game-object base pointer is the global at `DAT_00909764` @ `0x909764`** (runtime value e.g.
+  `0x1186a020`; a ~37 MB heap object that embeds the whole world state inline — all the `base+0x…`
+  offsets below are members of it).
+- **Mode dispatcher `FUN_00461440`** = `switch(*(base+0x233cc20))`: **1 → `processAutoPlayMode`
+  (`FUN_00467bf0`)**, 2 → `FUN_0048a680`, 3 → `FUN_004897f0`, **4 → `FUN_00487380` (playback)**.
+
+### `processAutoPlayMode` = `FUN_00467bf0` — the offline loader/replayer
+
+A sub-mode state machine at `*(base+0x233cc24)`; subtype `*(base+8)` selects the source (**3 =
+from file**). It builds the path **`"AutoPlay/%s"`** (fmt `0x4c6248`) from the name buffer at
+`base+0x1f1cbc + 0x40*index` (index = `*(base+0x1f35c0)`), `fopen(path,"rb")` → handle at
+`base+0x2340d08`, reads the header (version into `base+0x1f35c4`, must be **`0x1201`**; map id
+`DAT_009dbd44`; 32-byte name `DAT_00680af8`; …). Sub-modes:
+`0 START → 1 LOAD_AUTO_PLAY → 2 RECEIVING_STAGE → 3 LOAD_GROUND → 4 LOAD_OBJECT →
+5 SET_COLLISION_VOLUME → 6 ANALYZE_BATTLE_FIELD → (7 load actors) → 8 END_LOADING`, then returns
+the next mode (subtype 3 → **4 = playback**). On open failure it prints
+`"can't open file %s - processAutoPlayMode()"` (`0x4c621c`).
+
+The file-list populator is **`FUN_00487130(name)`**: with `NULL` it scans `"AutoPlay\AutoPlay%03d.ape"`
+(`0x4c8c60`/`0x4c8c70`) for indices 000–999 — on Windows's case-insensitive FS this matches the
+shipped `Autoplay001.ape`; with an explicit name it opens `"AutoPlay\<name>.ape"`. Playback reuses
+the **in-game recv path**: sub-mode 2 drains `FUN_004a7ab0` → `FUN_0048bca0` (the in-game inbound
+dispatcher, SPEC §4), the `.ape` bytes being fed into the ring by `FUN_004612b0`.
+
+### What ran, live (Frida, pid-of-the-day, 2026-10-16)
+
+1. Forcing `DAT_0076e398 = 9999` on the gated client advanced it straight into
+   `FUN_00461440 → processAutoPlayMode` — **first proof** was the `"can't open file AutoPlay/ -
+   processAutoPlayMode()"` dialog (empty `%s`, because the name buffer wasn't populated).
+2. The base pointer read from `0x909764` = `0x1186a020`. At the splash the object is **uninitialised**
+   (`*(base+0x233cc20)` mode = 0, `*(base+8)` subtype = −1) because the normal boot states (300–900)
+   are gated off.
+3. Priming the base — mode `+0x233cc20 = 1`, subtype `+8 = 3`, sub-mode `+0x233cc24 = 0`,
+   frame-counter `+0x233cc28 = 0`, index `+0x1f35c0 = 0`, name `"Autoplay001.ape"` at `+0x1f1cbc` —
+   then holding `DAT_0076e398 = 9999` made `processAutoPlayMode` **run the full pipeline**:
+   sub-mode `0 → 1` (**file opened**, handle `0x4d1968`, **version `0x1201`**, **map id 13**) `→ 2 →
+   3 → 4 → 5 → 6 → 8`, after which the mode advanced to **4 (playback)** and stayed there, state
+   `9999`, **stable for 30+ s**. So a real recorded match loaded into the real engine with **no
+   server and no launcher**.
+4. The window still shows the boot splash: toggling `DAT_0067febc` on/off changed nothing, so the
+   **"INITIALIZING NETSPHERE" splash is drawn by an independent presentation path** (the WinMain
+   render loop / boot layer), not gated by these sentinels. The replay **logic** runs; the **visible
+   render handoff** (splash → game renderer) is the one remaining native-only piece, and it belongs
+   to the same boot-completion the launcher would drive.
+
+### What this means for the boundary
+
+- The in-match per-tick data (actor transforms + animation per frame) **is present offline** in the
+  `.ape` stream and **is replayable** — the web port already decodes and renders it (`web/ape.js` +
+  the engine replay mode). The AutoPlay path is the native client doing the *same thing*.
+- Reaching a **live, interactive** match still needs the server-side **input→acceleration** transfer
+  (SPEC §5) — but **replay does not**: positions come from the file, not from client input. So the
+  "no offline ground truth" caveat applies only to *live play*, not to observing recorded motion.
+- Remaining native-only gap for on-screen pixels in `AXIS.EXE`: the boot-splash presentation handoff
+  (a separate subsystem). Not required for the web port, which renders the same `.ape` replays itself.
+
+---
+
+## Why a *live* match is unreachable offline (measured root cause)
 
 AXIS is a **two-process** title: a separate **`AxisPlay.exe` launcher** performs login,
 server/channel selection and NetSphere authentication, then hands the 3D client **`AXIS.EXE`** a
@@ -185,3 +269,11 @@ What is **not** reachable offline is everything before in-match. The entry point
 - Launch `AXIS.EXE`, attach Frida, hook `FUN_004962d0`/`FUN_00487380`/`FUN_00497d70` (0 calls =
   per-tick not running) and `wglSwapBuffers` (~480/s = alive); hook `ws2_32`/`kernel32` to see the
   init makes no external calls. A window screenshot shows the splash.
+- **Drive the offline AutoPlay logic** (the breakthrough above): at the splash, attach Frida, read
+  `base = *(void**)0x909764`, then write `base+0x233cc20 = 1` (mode=AutoPlay), `base+8 = 3`
+  (from-file), `base+0x233cc24 = 0`, `base+0x233cc28 = 0`, `base+0x1f35c0 = 0`, the ANSI string
+  `"Autoplay001.ape"` at `base+0x1f1cbc`, and hold `DAT_0076e398 (0x76e398) = 9999` every frame.
+  Hooking `FUN_00467bf0` entry logs the sub-mode advancing `0→1→…→8` with the opened file handle at
+  `base+0x2340d08`, version `base+0x1f35c4 == 0x1201` and map id `DAT_009dbd44`; the mode
+  `base+0x233cc20` then advances to `4` (playback) and holds. (The window keeps showing the splash —
+  the presentation layer is independent of these sentinels.)
