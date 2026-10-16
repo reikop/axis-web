@@ -679,6 +679,15 @@ by `run.py` at `/game/`; `web/audio.json` holds only filenames — no audio is c
      server alone isn't enough; the connect must also be driven (UI automation, or forcing the
      connect routine). `connect` is an ordinal import (no named symbol), reached from the
      `FUN_00450xxx` network module.
+   * **Connect entry point = `FUN_00452350(mode, addr)`** (the transport-open dispatcher). It resets
+     the roster (`FUN_00450a30`), copies the server-address string from `DAT_00a0e7f0` (populated from
+     the registry `TcpDNS`), clears the connection-object globals (`DAT_00a0c8f4` et al.), then
+     `switch(mode)` picks the transport backend: **mode 0 → `FUN_00453dd0(addr)` = the TCP client
+     connect**, modes 1/2/3 → `FUN_00453ee0`/`FUN_00454000`/`FUN_00454110` (other transports); on
+     success it sets the transport-active flag `DAT_00a0c854 = 1`. So the connection can be forced
+     from Frida by calling `FUN_00452350(0, &"127.0.0.1")` — the next concrete step: drive this, let
+     the loopback server answer, and capture the client's first (login) packet to continue the
+     handshake reversal.
    This is a genuine multi-stage reversal (full login/match handshake, then a protocol-correct
    server, then driving the client in) — begun and mapped here, but a standalone project, and its
    runtime behaviour (like §2.10) can't be verified offline until that server exists.
