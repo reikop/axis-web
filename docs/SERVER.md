@@ -99,10 +99,19 @@ skeleton/animation code path **runs offline and is directly observable in memory
 long-standing "animation keyframe sampler can't be observed offline (needs a live match)" caveat
 (SPEC §2.10) is **no longer true on this install**: the sampler now executes and can be hooked. (The
 window still shows the splash overlay — pixels are gated by the independent boot layer — but the
-sampler does not need pixels to be captured.) The sampler itself is one of `FUN_00497d70`'s callees in
-the `0x472xxx–0x473xxx` model/skeleton cluster (e.g. `0x472770`, `0x472950`, `0x473690`, `0x473860`,
-`0x473fd0`); pinpointing it (hook, feed a known time, read which keyframe bytes it reads) is the
-concrete remaining step to reconstruct the per-key stride/time-base — now **unblocked**.
+sampler does not need pixels to be captured.)
+
+Call-frequency profiling inside the mode-2 render (per `FUN_00497d70` invocation, measured) maps the
+render pipeline: the heavy callees are `0x49e274` (~2562/frame, a float math leaf), `0x47c800`
+(~212/frame, matrix multiply), `0x467a50` (~71/frame, returns the viewport width), `0x47ca20`
+(~42/frame, a **4×4 matrix copy** — confirmed by decompile) and `0x471e30` (~1/entity, the
+**camera + entity screen-projection** for HUD/targeting — `gluLookAt`/`gluPerspective` then world→screen,
+*not* the skeletal sampler, corrected). `0x470bc0` (~3/frame) is the already-reconstructed
+broadphase/xform. **The per-bone keyframe sampler was not isolated as its own hot callee** — it is
+either inlined in the skeletal-mesh draw or a deeper callee not yet pinned; reconstructing the per-key
+stride/time-base (hook the skeletal draw, feed a known time, trace which keyframe bytes it reads)
+remains the open step. It is **unblocked** (the path runs offline) but not yet done — and it is a
+fidelity refinement only: the web port already animates replay actors from the `.ape` actor state.
 
 ### What this means for the boundary
 
