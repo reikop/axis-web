@@ -28,6 +28,21 @@ The splash text is a texture, not a string, so the init state machine is not loc
 search. Consequently the per-tick simulation and animation that only run in-match (SPEC §2.10, §5)
 cannot be observed offline, and neither can the authoritative input→acceleration transfer.
 
+**Architecture correction — `AXIS.EXE` does no networking itself; `AxisPlay.exe` is the net
+front-end and the two share memory (measured from startup, 2026-10-16).** Spawning `AXIS.EXE` under
+Frida and tracing from entry shows it creates **~142 of its own events** (`CreateEventW` ×100,
+`CreateEventA` ×42), several **anonymous** file mappings (`CreateFileMappingW` ×5, all unnamed) and
+many `MapViewOfFile`/`DuplicateHandle` — but makes **zero** Winsock calls across the whole startup
+(`WSAStartup`/`socket`/`connect`/`gethostbyname` = 0). So the 3D client never touches the network at
+all: **`AxisPlay.exe` owns the sockets and relays to `AXIS.EXE` through inherited shared memory +
+events** (classic launcher/renderer split). Therefore the socket/connect chain found statically in
+`AXIS.EXE` below (`FUN_00452350`/`FUN_00453dd0`/`FUN_00452f20`) is **not the runtime path** standalone
+— it is unused dead/fallback code; the live transport is the shared-memory IPC with the launcher. The
+events `AXIS.EXE` blocks on at the splash are its **own** events, signalled by a worker that consumes
+the launcher's shared-memory handoff, which never arrives. The real emulation target is thus
+`AxisPlay.exe`'s **IPC side** (the shared-memory layout + event protocol), which is reversible from
+`AXIS.EXE`'s reader side — not the in-client socket code.
+
 **Closing this is a server-emulator-scale project**: reimplement the launcher handoff + a
 protocol-correct lobby/game server, not merely a game-packet relay.
 
