@@ -90,6 +90,10 @@
     const avPtr  = M.ccall('engine_alloc', 'number', ['number'], [16 * 3 * 4]);
     const shotPtr = M.ccall('engine_alloc', 'number', ['number'], [64 * 3 * 4]);
     let mySlot = -1, hp = 100, kills = 0, deaths = 0, lastHitBy = -1, nextId = 1;
+    const board = {};         // actor -> {k,d} deathmatch scoreboard (self + peers via 0x23 stats)
+    const feed = [];          // recent frags {killer,victim}
+    let respawnT = 0;         // spawn-invulnerability window start
+    const FRAG = 20;          // frag limit -> win
     const latest = {};        // remote positions (const-velocity dead-reckoned, SPEC §5)
     const projs = [];         // network projectiles: {owner,x,y,z,dx,dy,dz,age,local,dead}
     let ws = null;
@@ -97,9 +101,22 @@
     function readCam() { M.ccall('engine_get_camera', null, ['number'], [camPtr]); return new Float32Array(M.HEAPU8.buffer, camPtr, 6); }
     function send(m) { if (ws && ws.readyState === 1) ws.send(m); }
     function mkMsg(type) { const m = new Uint8Array(64); m[1] = type; return m; }
-    function onPacket(actor, pos) { const a = latest[actor]; if (a) { a.p0 = a.p1; a.p1 = pos; a.t = performance.now(); } else latest[actor] = { p1: pos, p0: null, t: performance.now() }; }
+    function onPacket(actor, pos) { if (!(actor in board)) board[actor] = { k: 0, d: 0 }; const a = latest[actor]; if (a) { a.p0 = a.p1; a.p1 = pos; a.t = performance.now(); } else latest[actor] = { p1: pos, p0: null, t: performance.now() }; }
     function remotePos(actor) { const a = latest[actor]; if (!a) return null; if (a.p0) { const fr = Math.min((performance.now() - a.t) / EXP, CAP); return [a.p1[0]+(a.p1[0]-a.p0[0])*fr, a.p1[1]+(a.p1[1]-a.p0[1])*fr, a.p1[2]+(a.p1[2]-a.p0[2])*fr]; } return a.p1; }
-    function hud() { const h = document.getElementById('hud'); if (h) { h.style.display = 'block'; const nE = Object.keys(latest).filter(k => +k !== mySlot).length; h.innerHTML = `<b>online</b> &middot; HP <b style="color:${hp>35?'#8fd98f':'#e88'}">${Math.max(0,hp|0)}</b> &middot; kills ${kills} &middot; deaths ${deaths} &middot; ${nE} enemy`; } }
+    function hud() {
+      const h = document.getElementById('hud'); if (!h) return;
+      board[mySlot] = { k: kills, d: deaths };
+      let win = -1; for (const a in board) if (board[a].k >= FRAG) { win = +a; break; }
+      const rows = Object.keys(board).map(a => ({ a: +a, k: board[a].k, d: board[a].d }))
+        .sort((x, y) => y.k - x.k)
+        .map(r => `${r.a === mySlot ? '<b>' : ''}P${r.a}${r.a === mySlot ? ' (you)' : ''}: ${r.k}/${r.d}${r.a === mySlot ? '</b>' : ''}`).join(' &middot; ');
+      const inv = performance.now() - respawnT < 2000 ? ' &middot; <span style="color:#8fd9ff">SPAWN</span>' : '';
+      const fl = feed.slice(-3).map(f => `P${f.killer} &#9654; P${f.victim}`).join(' &middot; ');
+      h.style.display = 'block';
+      h.innerHTML = (win >= 0 ? `<b style="color:#ffd24a">${win === mySlot ? 'YOU WIN' : 'P' + win + ' WINS'}</b> &middot; ` : '')
+        + `HP <b style="color:${hp > 35 ? '#8fd98f' : '#e88'}">${Math.max(0, hp | 0)}</b>${inv} &middot; ${rows}`
+        + (fl ? `<br><span style="opacity:.8;font-size:12px">${fl}</span>` : '');
+    }
 
     function fire() {                                  // F: shoot (peer-relayed, non-authoritative)
       if (mySlot < 0) return;
@@ -116,7 +133,7 @@
       const ang = Math.random() * 6.283, rr = radius * 0.5;
       const rx = center[0] + Math.cos(ang) * rr, ry = center[1] + radius * 0.1, rz = center[2] + Math.sin(ang) * rr;
       M.ccall('engine_set_campos', null, ['number', 'number', 'number'], [rx, ry, rz]);
-      hp = 100;
+      hp = 100; respawnT = performance.now();   // brief spawn invulnerability
       const m = mkMsg(0x22), dv = new DataView(m.buffer); m[4] = mySlot; m[5] = lastHitBy & 0xff;
       dv.setFloat32(8, rx, true); dv.setFloat32(12, ry, true); dv.setFloat32(16, rz, true);
       send(m); lastHitBy = -1;
@@ -159,10 +176,14 @@
       const pay = d.subarray(5, 69), t = pay[1], dv = new DataView(pay.buffer, pay.byteOffset, 64);
       if (t === 0) { const s = codec.decodeState(pay); onPacket(s.actor, [s.x, s.y, s.z]); }
       else if (t === 0x20) { projs.push({ owner: pay[4], x: dv.getFloat32(8,true), y: dv.getFloat32(12,true), z: dv.getFloat32(16,true), dx: dv.getFloat32(20,true), dy: dv.getFloat32(24,true), dz: dv.getFloat32(28,true), age: 0, local: false, dead: false }); if (window.__playSfx) window.__playSfx('fire'); }
-      else if (t === 0x21) { const victim = pay[4], shooter = pay[5], dmg = dv.getInt32(8,true); if (victim === mySlot) { hp -= dmg; lastHitBy = shooter; if (window.__playSfx) window.__playSfx('impact'); console.log('mp:hit by ' + shooter + ' dmg ' + dmg + ' -> hp ' + hp); if (hp <= 0) { deaths++; respawn(); } hud(); } }
-      else if (t === 0x22) { const victim = pay[4], killer = pay[5]; if (killer === mySlot && victim !== mySlot) { kills++; console.log('mp:kill of ' + victim + ' -> kills ' + kills); hud(); } }
+      else if (t === 0x21) { const victim = pay[4], shooter = pay[5], dmg = dv.getInt32(8,true); if (victim === mySlot && performance.now() - respawnT > 2000) { hp -= dmg; lastHitBy = shooter; if (window.__playSfx) window.__playSfx('impact'); console.log('mp:hit by ' + shooter + ' dmg ' + dmg + ' -> hp ' + hp); if (hp <= 0) { deaths++; respawn(); } hud(); } }
+      else if (t === 0x22) { const victim = pay[4], killer = pay[5]; feed.push({ killer, victim }); if (feed.length > 6) feed.shift(); if (killer === mySlot && victim !== mySlot) { kills++; console.log('mp:kill of ' + victim + ' -> kills ' + kills); } hud(); }
+      else if (t === 0x23) { board[d[4]] = { k: dv.getInt32(8, true), d: dv.getInt32(12, true) }; }   // peer stats
     };
-    ws.onopen = () => { setInterval(() => { if (ws.readyState === 1 && mySlot >= 0) { const c = readCam(); send(codec.encodeState({ actor: mySlot, x: c[0], y: c[1], z: c[2], yaw: 0 })); } }, 120); };
+    ws.onopen = () => {
+      setInterval(() => { if (ws.readyState === 1 && mySlot >= 0) { const c = readCam(); send(codec.encodeState({ actor: mySlot, x: c[0], y: c[1], z: c[2], yaw: 0 })); } }, 120);
+      setInterval(() => { if (ws.readyState === 1 && mySlot >= 0) { const m = mkMsg(0x23), dv = new DataView(m.buffer); m[4] = mySlot; dv.setInt32(8, kills, true); dv.setInt32(12, deaths, true); send(m); } }, 1000);   // broadcast scoreboard stats
+    };
     ws.onerror = () => {};
   }
 
@@ -281,7 +302,16 @@
       try { const s = c.createBufferSource(); s.buffer = buffers[k]; s.connect(c.destination); s.start(); } catch (_) {}
     };
     window.__playSfx = play;
-    window.addEventListener('keydown', e => { if ((e.key === 'f' || e.key === 'F') && !e.repeat) { if (window.__mpFire) window.__mpFire(); else play('fire'); } });
+    let accelOn = (new URLSearchParams(location.search)).has('accel');
+    window.addEventListener('keydown', e => {
+      if (e.repeat) return;
+      if (e.key === 'f' || e.key === 'F') { if (window.__mpFire) window.__mpFire(); else play('fire'); }
+      else if (e.key === 'g' || e.key === 'G') {   // toggle the optional momentum feel in-game
+        accelOn = !accelOn;
+        try { M.ccall('engine_set_accel', null, ['number'], [accelOn ? 1 : 0]); } catch (_) {}
+        console.log('movement: momentum feel ' + (accelOn ? 'ON' : 'OFF') + ' (approximate, not original physics)');
+      }
+    });
     canvas.addEventListener('click', ensureCtx);
     let li = 0, lp = 0;
     try { li = M.ccall('engine_impacts', 'number', [], []); lp = M.ccall('engine_pickups', 'number', [], []); } catch (_) {}
@@ -301,7 +331,7 @@
         const [shape, bfd] = await Promise.all([fetchU8('/game/Data/Shape.dat'), fetchU8('/game/Map/' + mapName + '.bfd')]);
         const sp = toWasm(M, shape), bp = toWasm(M, bfd);
         const placed = M.ccall('engine_load_map', 'number', ['number', 'number', 'number', 'number'], [sp, shape.length, bp, bfd.length]);
-        if (placed >= 0 && (qs.has('proj') || qs.has('replay'))) {   // demo targets / recorded players as a real AXIS model (ALIEN\GIRL)
+        if (placed >= 0 && (qs.has('proj') || qs.has('replay') || qs.has('mp'))) {   // demo targets / recorded or online players as a real AXIS model (ALIEN\GIRL)
           try { M.ccall('engine_load_entity_mesh', 'number', ['number', 'number', 'number'], [sp, shape.length, 5]); } catch (_) {}
         }
         M.ccall('engine_free', null, ['number'], [sp]); M.ccall('engine_free', null, ['number'], [bp]);
@@ -319,7 +349,7 @@
             const m = window.AXISMap.extractMap(bfd.buffer.slice(bfd.byteOffset, bfd.byteOffset + bfd.byteLength));
             const want = new Map();
             for (const o of m.objects) { const id = o.name.replace(/[\\/]/g, '_').toLowerCase(); const ti = byLower[id]; if (ti === undefined) continue; if (!want.has(ti)) want.set(ti, ('SHAPE\\' + stoc[ti].name).toUpperCase()); }
-            if (want.size || qs.has('proj') || qs.has('replay')) {
+            if (want.size || qs.has('proj') || qs.has('replay') || qs.has('mp')) {
               const exe = await fetchU8('/game/AXIS.EXE'); const ep = toWasm(M, exe);
               const imgs = [];
               for (let n = 0; n < 6; n++) { try { const img = await fetchU8('/game/Data/Image' + n + '.dat'); imgs.push({ u8: img, toc: window.AXISShape.readTOC(img.buffer.slice(img.byteOffset, img.byteOffset + img.byteLength)) }); } catch (_) {} }
@@ -329,7 +359,7 @@
                 const ptx = findPtx(texname);
                 if (ptx) { const pp = toWasm(M, ptx); const r = M.ccall('engine_map_set_texture', 'number', ['number', 'number', 'number', 'number', 'number'], [ti, ep, exe.length, pp, ptx.length]); M.ccall('engine_free', null, ['number'], [pp]); if (r >= 0) nt++; }
               }
-              if ((qs.has('proj') || qs.has('replay')) && stoc[5]) {   // skin the model (record 5) with its real SHAPE texture
+              if ((qs.has('proj') || qs.has('replay') || qs.has('mp')) && stoc[5]) {   // skin the model (record 5) with its real SHAPE texture
                 const ptx = findPtx(('SHAPE\\' + stoc[5].name).toUpperCase());
                 if (ptx) { const pp = toWasm(M, ptx); M.ccall('engine_set_entity_texture', 'number', ['number', 'number', 'number', 'number'], [ep, exe.length, pp, ptx.length]); M.ccall('engine_free', null, ['number'], [pp]); }
               }
@@ -341,7 +371,7 @@
         if (placed >= 0 && qs.has('accel')) {   // ?accel -> optional, UNVERIFIED momentum feel (off by default)
           try { M.ccall('engine_set_accel', null, ['number'], [1]); statusEl.textContent += ' · movement: approximate momentum feel ON (?accel — a local convenience, NOT the original server physics)'; } catch (_) {}
         }
-        if (placed >= 0 && qs.has('mp')) startMultiplayer(M, qs.get('mp'));
+        if (placed >= 0 && qs.has('mp')) { startSfx(M); startMultiplayer(M, qs.get('mp')); }   // SFX + F/G key wiring, then net combat
         if (placed >= 0 && qs.has('replay')) startReplay(M, qs.get('replay'));   // 3D replay of a recorded match
         if (placed >= 0) {                              // walkable: show the HUD + crosshair
           const hud = document.getElementById('hud'), cross = document.getElementById('cross');
