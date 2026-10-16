@@ -65,7 +65,8 @@ cd port && ./build_engine.sh /path/to/Axis_Win
 The hub links the viewers (map, mesh, textured mesh, skeleton, replay, textures, audio, archive,
 the WASM decrypt/decode proofs) and the **WASM Engine** — a real Emscripten program that opens a
 WebGL context and renders your maps/meshes from the same byte-exact reconstruction. Walk it with
-WASD + Q/E/Space (collision stops you at walls), look with the mouse (click to lock) or the arrow
+WASD + Q/E/Space (collision stops you at walls) — or, on a phone/tablet, a left virtual stick to move,
+right-drag to look, and a FIRE button — look with the mouse (click to lock) or the arrow
 keys, play music, fight other players online over the relay (`?map=NAME&mp&room=NAME` or the start
 menu's **Join online** button — rooms are separate matches; F shoots, **1–5**
 switch weapons (30mm/60mm/Energy/Missile/Rocket, named from your `Item.dat`), **Enter** to chat, with

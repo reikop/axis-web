@@ -77,6 +77,59 @@
   // players as avatars, parsing their positions with the REAL type-0 wire codec
   // (crypt.js encodeState/decodeState, the same bytes the game sends). This is the
   // WASM engine itself speaking the mapped §4 protocol, not an ad-hoc format.
+  // On-screen touch controls (phones/tablets): a left virtual stick drives WASD, a
+  // right-side drag looks (I/J/K/L), and a FIRE button shoots. The engine already
+  // honours synthesized window KeyboardEvents (cf. the ?walk self-test), so these map
+  // straight onto the existing movement/look/fire paths. No-op if already set up.
+  function setupTouch() {
+    if (window.__touchReady) return; window.__touchReady = true;
+    const KC = { w: 87, a: 65, s: 83, d: 68, i: 73, j: 74, k: 75, l: 76 };
+    const hold = new Set();
+    const key = (k, on) => window.dispatchEvent(new KeyboardEvent(on ? 'keydown' : 'keyup', { key: k, keyCode: KC[k], which: KC[k], bubbles: true }));
+    const setHeld = (want) => { for (const k of hold) if (!want.has(k)) { key(k, false); hold.delete(k); } for (const k of want) if (!hold.has(k)) { key(k, true); hold.add(k); } };
+    let moveId = null, moveOX = 0, moveOY = 0, lookId = null, lookX = 0, lookY = 0, lookClear = null;
+    const DEAD = 16, LOOK = ['i', 'j', 'k', 'l'];
+    function onStart(e) {
+      for (const t of e.changedTouches) {
+        if (t.clientX < window.innerWidth / 2) { if (moveId === null) { moveId = t.identifier; moveOX = t.clientX; moveOY = t.clientY; } }
+        else if (lookId === null) { lookId = t.identifier; lookX = t.clientX; lookY = t.clientY; }
+      }
+      e.preventDefault();
+    }
+    function onMove(e) {
+      for (const t of e.changedTouches) {
+        if (t.identifier === moveId) {
+          const dx = t.clientX - moveOX, dy = t.clientY - moveOY, want = new Set();
+          if (dy < -DEAD) want.add('w'); else if (dy > DEAD) want.add('s');
+          if (dx < -DEAD) want.add('a'); else if (dx > DEAD) want.add('d');
+          setHeld(want);
+        } else if (t.identifier === lookId) {
+          const dx = t.clientX - lookX, dy = t.clientY - lookY; lookX = t.clientX; lookY = t.clientY;
+          for (const k of LOOK) key(k, (k === 'l' && dx > 3) || (k === 'j' && dx < -3) || (k === 'k' && dy > 3) || (k === 'i' && dy < -3));
+          clearTimeout(lookClear); lookClear = setTimeout(() => { for (const k of LOOK) key(k, false); }, 90);
+        }
+      }
+      e.preventDefault();
+    }
+    function onEnd(e) {
+      for (const t of e.changedTouches) {
+        if (t.identifier === moveId) { moveId = null; setHeld(new Set()); }
+        else if (t.identifier === lookId) { lookId = null; for (const k of LOOK) key(k, false); }
+      }
+    }
+    const cv = document.getElementById('canvas');
+    cv.addEventListener('touchstart', onStart, { passive: false });
+    cv.addEventListener('touchmove', onMove, { passive: false });
+    cv.addEventListener('touchend', onEnd); cv.addEventListener('touchcancel', onEnd);
+    const fb = document.createElement('div');
+    fb.textContent = 'FIRE';
+    fb.style.cssText = 'position:fixed;right:18px;bottom:24px;z-index:32;width:84px;height:84px;border-radius:50%;background:#b2402fcc;color:#fff;border:2px solid #e06a57;display:flex;align-items:center;justify-content:center;font:700 14px system-ui;user-select:none;touch-action:none';
+    const doFire = (e) => { e.preventDefault(); if (window.__mpFire) window.__mpFire(); else if (window.__playSfx) window.__playSfx('fire'); };
+    fb.addEventListener('touchstart', doFire, { passive: false }); fb.addEventListener('mousedown', doFire);
+    if (!('ontouchstart' in window) && !navigator.maxTouchPoints) fb.style.display = 'none';   // keep desktop clean
+    document.body.appendChild(fb);
+  }
+
   async function startMultiplayer(M, param) {
     const room = ((new URLSearchParams(location.search)).get('room') || 'lobby').slice(0, 24) || 'lobby';
     let url = (param && /^wss?:\/\//.test(param)) ? param : 'ws://127.0.0.1:8140';
@@ -448,6 +501,7 @@
           const hud = document.getElementById('hud'), cross = document.getElementById('cross');
           const sim = qs.has('proj');
           hud.style.display = 'block'; cross.style.display = 'block';
+          setupTouch();                                 // on-screen controls for phones/tablets
           const base = `<b>${mapName}</b> &middot; ${placed} objects` + (sim ? ' &middot; <b>F</b> fire' : '');
           hud.innerHTML = base;
           if (sim) setInterval(() => { try { hud.innerHTML = base + ` &middot; <b>destroyed ${M.ccall('engine_score', 'number', [], [])}</b> &middot; pickups ${M.ccall('engine_pickups', 'number', [], [])}`; } catch (_) {} }, 250);
