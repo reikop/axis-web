@@ -105,8 +105,19 @@ inbound frames there (a shared section, cross-process injection, or a net worker
 which the client never calls). **For an emulator this is the concrete injection point**: writing a
 64-byte frame into the inbound ring / roster slot and setting the actor's ready-flag is exactly what
 delivers a packet to the client; `server/relay.js` already produces these frames. Open question for
-the launcher side: how frames physically cross from the network front-end into these globals (the next
-reversal step).
+the launcher side: how frames physically cross from the network front-end into these globals.
+
+**Raw-AFD ruled out — the client does no network I/O at all, so frames are injected cross-process
+(measured 2026-10-16).** To rule out the client doing sockets below `ws2_32` (raw `\Device\Afd` via
+`NtDeviceIoControlFile`, which `ws2_32` hooks miss), a spawn-time `ntdll` trace hooked `NtCreateFile`
+(checking the object name for `afd`/`socket`) and `NtDeviceIoControlFile`: **zero AFD/socket handles
+are ever opened** (`afd_hits=0`) — the `NtDeviceIoControlFile` calls are GPU/display IOCTLs. The client
+only opens data files at init (e.g. `initdata\axis.cfg`, `initdata\msgkor.dat`). So AXIS.EXE performs
+**no network I/O by any path**; `AxisPlay.exe` must deposit inbound 64-byte frames **directly into the
+client's memory** (a shared PE section it maps, or `WriteProcessMemory` into the `DAT_00af0b70` ring /
+`DAT_009fad20` slots, then set `DAT_009fad18` and signal). That injection point is externally reachable
+(e.g. an emulator or even Frida `WriteProcessMemory`), but it only matters once the client is driven
+past the boot handshake — which is the same launcher-handoff dependency.
 
 ## The lobby / connection entry points (mapped; the missing front half)
 
