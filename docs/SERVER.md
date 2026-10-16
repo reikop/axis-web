@@ -60,7 +60,12 @@ init-state string to anchor on either.) A direct intervention was also tried and
 insufficient: force-pulsing `SetEvent` on all nine Events the client waits on (40× over 4 s) left it
 **still on the splash, unchanged** (and did not crash) — so the init is not gated on a bare event that
 can be nudged; it needs the real launcher-provided handoff data/connection, confirming the dependency
-is content, not just signalling.
+is content, not just signalling. A second intervention — force-writing the connection/transport
+state globals (`DAT_009fad08`=connected, `DAT_00a0c854`/`DAT_00a0ec74`=transport active, own actor id)
+to 1 for ~5 s — also left the client on the splash, unchanged: the boot gate is **upstream** of the
+connection state, a specific launcher "NetSphere ready" handoff not reachable by flag-poking. Finding
+and satisfying it needs dynamic coverage analysis of the splash state machine (texture-based, so not
+string-anchored) plus the skirmish-host feed — i.e. the AxisPlay emulator.
 
 The handoff is also **not** a named-IPC signal that could be spoofed from outside: hooking the wait
 APIs and resolving every waited-on handle with `NtQueryObject` (type + name; note the 32-bit
