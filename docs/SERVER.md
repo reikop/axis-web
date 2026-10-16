@@ -87,16 +87,39 @@ dispatcher, SPEC §4), the `.ape` bytes being fed into the ring by `FUN_004612b0
    render + present all run**; only the visible camera/overlay for `AXIS.EXE` is unresolved, and it
    is not needed by the web port, which renders the same `.ape` data itself.
 
+### The skeleton/animation render path also runs offline (mode-2 force, verified 2026-10-16)
+
+The per-entity **model/animation/skeleton render is `FUN_00497d70`** (17 KB), called **only from the
+mode-2 handler `FUN_0048a680`** (`FUN_00461440` case 2). In plain autoplay (mode 4 / `FUN_00487380`)
+it is **not** called — measured: during mode-4 playback `FUN_00497d70` = **0 calls** while the small
+per-tick `FUN_004962d0` runs ~230×/s. But after the scene finishes loading, **forcing
+`*(base+0x233cc20) = 2`** (so the dispatcher runs `FUN_0048a680`) makes **`FUN_00497d70` execute every
+frame** (measured ~230×/s, 1:1 with the mode-2 handler) on the autoplay-loaded actors. So the
+skeleton/animation code path **runs offline and is directly observable in memory** — the
+long-standing "animation keyframe sampler can't be observed offline (needs a live match)" caveat
+(SPEC §2.10) is **no longer true on this install**: the sampler now executes and can be hooked. (The
+window still shows the splash overlay — pixels are gated by the independent boot layer — but the
+sampler does not need pixels to be captured.) The sampler itself is one of `FUN_00497d70`'s callees in
+the `0x472xxx–0x473xxx` model/skeleton cluster (e.g. `0x472770`, `0x472950`, `0x473690`, `0x473860`,
+`0x473fd0`); pinpointing it (hook, feed a known time, read which keyframe bytes it reads) is the
+concrete remaining step to reconstruct the per-key stride/time-base — now **unblocked**.
+
 ### What this means for the boundary
 
 - The in-match per-tick data (actor transforms + animation per frame) **is present offline** in the
   `.ape` stream and **is replayable** — the web port already decodes and renders it (`web/ape.js` +
   the engine replay mode). The AutoPlay path is the native client doing the *same thing*.
+- The **animation keyframe sampler is now observable offline** (above) — a reconstruction target, no
+  longer a structural blocker. It affects in-match skeletal-pose fidelity; the web port already
+  animates replay actors from the `.ape` actor state, so this is a fidelity improvement, not a gap in
+  the offline port.
 - Reaching a **live, interactive** match still needs the server-side **input→acceleration** transfer
   (SPEC §5) — but **replay does not**: positions come from the file, not from client input. So the
-  "no offline ground truth" caveat applies only to *live play*, not to observing recorded motion.
-- Remaining native-only gap for on-screen pixels in `AXIS.EXE`: the boot-splash presentation handoff
-  (a separate subsystem). Not required for the web port, which renders the same `.ape` replays itself.
+  "no offline ground truth" caveat now applies **only** to *live play*, not to observing recorded
+  motion or animation.
+- Remaining native-only gap for on-screen pixels in `AXIS.EXE`: the boot-splash presentation overlay
+  (a separate subsystem, drawn over the running scene even while `wglSwapBuffers` fires every frame).
+  Not required for the web port, which renders the same `.ape` replays itself.
 
 ---
 
@@ -285,3 +308,8 @@ What is **not** reachable offline is everything before in-match. The entry point
   `base+0x2340d08`, version `base+0x1f35c4 == 0x1201` and map id `DAT_009dbd44`; the mode
   `base+0x233cc20` then advances to `4` (playback) and holds. (The window keeps showing the splash —
   the presentation layer is independent of these sentinels.)
+- **Observe the in-match pipeline + animation path**: with the above running, hook `FUN_0048bca0`
+  (in-game apply) — it fires ~45×/s with type 0/1/2 frames (actors driven by the replay). Then, once
+  `base+0x233cc20` reaches `4`, **overwrite it with `2`**: the dispatcher switches to `FUN_0048a680`,
+  which calls the model/skeleton render `FUN_00497d70` every frame (hook both to confirm ~230×/s) —
+  the animation sampler then runs and can be captured from its `0x472xxx–0x473xxx` callees.
