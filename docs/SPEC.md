@@ -654,6 +654,28 @@ by `run.py` at `/game/`; `web/audio.json` holds only filenames — no audio is c
    is the rest of the per-tick simulation the dispatcher feeds (`FUN_004962d0`, `FUN_0047c480`,
    `FUN_00478f10`, `FUN_0048e220`, `FUN_004901d0`, `FUN_0048f1e0` — movement/physics/weapons/
    damage) — i.e. the game simulation itself, not the wire format.
+
+   **Toward a private lobby+game server (the only route to in-match, begun 2026-10-16).** Reaching
+   the state where the per-tick sim/animation runs needs a server; first steps are mapped:
+   * **Connection gate.** `pnSendPacketData` only sends when `FUN_004a7d30` returns the global
+     `DAT_009fad08` (the "connected" flag); the socket send itself is `FUN_00450700`.
+   * **Session/lobby inbound dispatcher = `FUN_00450520`** (`switch(msgType-1)` on the lower
+     transport layer, distinct from the in-game `FUN_0048bca0`): type 1 → `FUN_004507e0` init,
+     type 2 → session setup (`FUN_004535c0`/`FUN_00450a30`), **type 6 → the join-ACK**: it sets
+     `DAT_009fad08 = 1`, marks the actor slot `DAT_009fad10[actor*0x104]=1` and stores the
+     client's own actor id in `DAT_009fee24` (the id `pnSendPacketData` then stamps into every
+     outbound frame); type 7 copies a 0x40-byte per-actor record into the roster at
+     `DAT_009fad20 + actor*0x410`. So a private server must send type 1 → 2 → 6 to drive the
+     client "connected" and assign its id.
+   * **Measured: the client does not initiate the connection on its own.** With loopback listeners
+     up on `:7777`/`:7778` and the server-select gate bypassed, a Frida trace over 12 s saw **zero**
+     `connect`/`WSAConnect`/`send` — the socket connect is triggered by the in-UI server pick, so a
+     server alone isn't enough; the connect must also be driven (UI automation, or forcing the
+     connect routine). `connect` is an ordinal import (no named symbol), reached from the
+     `FUN_00450xxx` network module.
+   This is a genuine multi-stage reversal (full login/match handshake, then a protocol-correct
+   server, then driving the client in) — begun and mapped here, but a standalone project, and its
+   runtime behaviour (like §2.10) can't be verified offline until that server exists.
 5. (optional) full PTX block decoder for a standalone PNG extractor — done (`tools/ptx_decode.py`).
 
 ## 5. Simulation & determinism (entry points mapped)
