@@ -139,6 +139,20 @@
       send(m); lastHitBy = -1;
     }
 
+    // in-game chat (page-side over the relay; Enter to type, Esc to cancel)
+    const chatLog = document.createElement('div');
+    chatLog.style.cssText = 'position:fixed;left:12px;bottom:58px;max-width:46ch;font:12px/1.5 system-ui;color:#dfe6ee;text-shadow:0 1px 2px #000;z-index:30;pointer-events:none';
+    const chatIn = document.createElement('input');
+    chatIn.maxLength = 55; chatIn.placeholder = 'say… (Enter = send, Esc = cancel)';
+    chatIn.style.cssText = 'position:fixed;left:12px;bottom:28px;width:44ch;display:none;z-index:31;background:#11151aee;color:#fff;border:1px solid #2a3139;border-radius:5px;padding:5px 8px;font:13px system-ui';
+    document.body.appendChild(chatLog); document.body.appendChild(chatIn);
+    function addChat(actor, text) { const l = document.createElement('div'); l.textContent = (actor === mySlot ? 'you' : 'P' + actor) + ': ' + text; chatLog.appendChild(l); while (chatLog.children.length > 6) chatLog.removeChild(chatLog.firstChild); }
+    function sendChat(text) { const m = mkMsg(0x24); m[4] = mySlot; const b = new TextEncoder().encode(text); for (let i = 0; i < b.length && i < 55; i++) m[8 + i] = b[i]; send(m); addChat(mySlot, text); }
+    function openChat() { window.__mpChatting = true; chatIn.style.display = 'block'; chatIn.value = ''; chatIn.focus(); try { M.ccall('engine_set_input', null, ['number'], [0]); } catch (e) {} }
+    function closeChat(doSend) { if (doSend && chatIn.value.trim()) sendChat(chatIn.value.trim().slice(0, 55)); window.__mpChatting = false; chatIn.style.display = 'none'; chatIn.blur(); try { M.ccall('engine_set_input', null, ['number'], [1]); } catch (e) {} }
+    chatIn.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') closeChat(true); else if (e.key === 'Escape') closeChat(false); });
+    window.addEventListener('keydown', e => { if (!window.__mpChatting && (e.key === 'Enter')) { e.preventDefault(); openChat(); } }, true);
+
     let lastT = performance.now();
     function tick() {
       const now = performance.now(); let dt = (now - lastT) / 1000; lastT = now; if (dt > 0.1) dt = 0.1;
@@ -162,10 +176,10 @@
       const f = new Float32Array(M.HEAPU8.buffer, avPtr, 16 * 3); let n = 0;
       for (const k of Object.keys(latest)) { if (+k === mySlot || n >= 16) continue; const rp = remotePos(+k); if (!rp) continue; f[n*3]=rp[0]; f[n*3+1]=rp[1]; f[n*3+2]=rp[2]; n++; }
       M.ccall('engine_set_avatars', null, ['number', 'number'], [avPtr, n]);
-      hud();
       requestAnimationFrame(tick);
     }
     requestAnimationFrame(tick);
+    setInterval(hud, 250);   // refresh the HUD at 4 Hz (not every frame) to avoid DOM churn
 
     try { ws = new WebSocket(url); } catch (e) { statusEl.textContent = 'mp connect failed'; return; }
     ws.binaryType = 'arraybuffer';
@@ -179,6 +193,7 @@
       else if (t === 0x21) { const victim = pay[4], shooter = pay[5], dmg = dv.getInt32(8,true); if (victim === mySlot && performance.now() - respawnT > 2000) { hp -= dmg; lastHitBy = shooter; if (window.__playSfx) window.__playSfx('impact'); console.log('mp:hit by ' + shooter + ' dmg ' + dmg + ' -> hp ' + hp); if (hp <= 0) { deaths++; respawn(); } hud(); } }
       else if (t === 0x22) { const victim = pay[4], killer = pay[5]; feed.push({ killer, victim }); if (feed.length > 6) feed.shift(); if (killer === mySlot && victim !== mySlot) { kills++; console.log('mp:kill of ' + victim + ' -> kills ' + kills); } hud(); }
       else if (t === 0x23) { board[d[4]] = { k: dv.getInt32(8, true), d: dv.getInt32(12, true) }; }   // peer stats
+      else if (t === 0x24) { let end = 8; while (end < 64 && pay[end] !== 0) end++; try { const tx = new TextDecoder().decode(pay.subarray(8, end)); addChat(d[4], tx); console.log('mp:chat P' + d[4] + ': ' + tx); } catch (e) {} }   // chat
     };
     ws.onopen = () => {
       setInterval(() => { if (ws.readyState === 1 && mySlot >= 0) { const c = readCam(); send(codec.encodeState({ actor: mySlot, x: c[0], y: c[1], z: c[2], yaw: 0 })); } }, 120);
@@ -304,7 +319,7 @@
     window.__playSfx = play;
     let accelOn = (new URLSearchParams(location.search)).has('accel');
     window.addEventListener('keydown', e => {
-      if (e.repeat) return;
+      if (e.repeat || window.__mpChatting) return;
       if (e.key === 'f' || e.key === 'F') { if (window.__mpFire) window.__mpFire(); else play('fire'); }
       else if (e.key === 'g' || e.key === 'G') {   // toggle the optional momentum feel in-game
         accelOn = !accelOn;

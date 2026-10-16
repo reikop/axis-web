@@ -126,6 +126,7 @@ static int camReady = 0;
 static unsigned char keyDown[320];
 static float camVel[3] = {0, 0, 0};   /* persistent velocity for the optional feel model */
 static int gAccelMove = 0;            /* OFF by default; see engine_set_accel */
+static int gInputOn = 1;              /* gate WASD/look while the page captures keys (chat) */
 static double lastT = 0.0;
 
 static void camForward(float *f) {
@@ -282,6 +283,12 @@ EMSCRIPTEN_KEEPALIVE void engine_get_camera(float *out) {
 }
 EMSCRIPTEN_KEEPALIVE void engine_set_campos(float x, float y, float z) {
     camPos[0] = x; camPos[1] = y; camPos[2] = z;
+}
+/* gate keyboard movement/look so the page can own the keys (e.g. while typing in
+ * chat). Clears held keys when disabling so none stick. */
+EMSCRIPTEN_KEEPALIVE void engine_set_input(int on) {
+    gInputOn = on ? 1 : 0;
+    if (!gInputOn) for (int i = 0; i < 320; i++) keyDown[i] = 0;
 }
 
 /* spawn a burst of gravity debris (the verified axis_effect debris layer) at a
@@ -548,7 +555,7 @@ static void mat_lookat(float *m, const float *eye, const float *ctr, const float
 static void frame(void) {
     double now = emscripten_get_now(); float dt = lastT ? (float)((now - lastT) / 1000.0) : 0.016f; lastT = now;
     if (dt > 0.1f) dt = 0.1f;
-    if (camReady) {
+    if (camReady && gInputOn) {
         float look = 1.6f * dt;                              /* arrows / IJKL look */
         if (keyDown['J'] || keyDown[37]) camYaw -= look;     /* 37=Left 39=Right 38=Up 40=Down */
         if (keyDown['L'] || keyDown[39]) camYaw += look;

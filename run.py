@@ -161,8 +161,12 @@ def main():
         def __init__(self, *a, **k):
             super().__init__(*a, directory=WEB, **k)
 
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("127.0.0.1", port), Handler) as httpd:
+    # threaded so the browser's parallel/keep-alive connections never serialize into
+    # a stall (a single-threaded server can block one connection behind another)
+    class Server(socketserver.ThreadingTCPServer):
+        daemon_threads = True
+        allow_reuse_address = True
+    with Server(("127.0.0.1", port), Handler) as httpd:
         url = f"http://127.0.0.1:{port}/home.html"
         print(f"serving  : {url}  (Ctrl+C to stop)", flush=True)
         try:
