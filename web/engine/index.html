@@ -26,7 +26,8 @@
   <div id="sub">A real Emscripten program (not the decoder reactor): <code>main()</code> opens a GLES2
   context and renders AXIS geometry decoded by the linked-in reconstruction. Your game files are
   fetched locally — nothing is uploaded. <b>Walk:</b> W/A/S/D move, Q/E (or Space) down/up,
-  arrows or I/J/K/L look, Shift sprint. Try <code>?map=CUBE</code>.</div>
+  arrows or I/J/K/L look, Shift sprint. Try <code>?map=CUBE</code>, or <code>&accel</code> for an
+  optional momentum feel (a convenience, not the original server physics).</div>
 </header>
 <div id="wrap">
   <div id="stage">
@@ -286,6 +287,9 @@
               statusEl.textContent += ` · ${nt} shape skin(s) textured`;
             }
           } catch (e) { /* leave map flat on any texture error */ }
+        }
+        if (placed >= 0 && qs.has('accel')) {   // ?accel -> optional, UNVERIFIED momentum feel (off by default)
+          try { M.ccall('engine_set_accel', null, ['number'], [1]); statusEl.textContent += ' · movement: approximate momentum feel ON (?accel — a local convenience, NOT the original server physics)'; } catch (_) {}
         }
         if (placed >= 0 && qs.has('mp')) startMultiplayer(M, qs.get('mp'));
         if (placed >= 0 && qs.has('replay')) startReplay(M, qs.get('replay'));   // 3D replay of a recorded match

@@ -62,7 +62,10 @@ the WASM decrypt/decode proofs) and the **WASM Engine** — a real Emscripten pr
 WebGL context and renders your maps/meshes from the same byte-exact reconstruction. Walk it with
 WASD + Q/E/Space (collision stops you at walls), look with the mouse (click to lock) or the arrow
 keys, play music, connect to the relay for multiplayer (`?map=NAME&mp`), and run the reconstructed
-simulation with `?map=NAME&proj` — **press F to fire**.
+simulation with `?map=NAME&proj` — **press F to fire**. Add `&accel` for an optional momentum feel
+while walking — a local convenience, explicitly **not** a reconstruction of the original server's
+input→acceleration (which has no offline ground truth); the default movement stays the replay-verified
+model.
 
 ## ⚠️ You must own the game
 

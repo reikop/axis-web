@@ -121,6 +121,8 @@ static float gCenter[3] = {0, 0, 0}, gRadius = 1.0f;
 static float camPos[3] = {0, 0, 0}, camYaw = 0.0f, camPitch = 0.0f, camSpeed = 1.0f;
 static int camReady = 0;
 static unsigned char keyDown[320];
+static float camVel[3] = {0, 0, 0};   /* persistent velocity for the optional feel model */
+static int gAccelMove = 0;            /* OFF by default; see engine_set_accel */
 static double lastT = 0.0;
 
 static void camForward(float *f) {
@@ -303,6 +305,11 @@ static int proj_hit_map(const float *prev, const float *cur, float *outHit) {
  * loop runs it through axis_input_build_masks like any input. Lets the page fire
  * without a synthetic keypress (used by ?fire and for automated verification). */
 EMSCRIPTEN_KEEPALIVE void engine_fire(void) { gActPress[0] = 1; }
+
+/* Toggle the OPTIONAL, UNVERIFIED momentum feel for interactive walking (off by
+ * default). Not the original input->acceleration transfer (no offline ground
+ * truth); a local convenience only. Clears residual velocity when turned off. */
+EMSCRIPTEN_KEEPALIVE void engine_set_accel(int on) { gAccelMove = on ? 1 : 0; if (!gAccelMove) { camVel[0] = camVel[1] = camVel[2] = 0.0f; } }
 
 /* HUD state: how many pickups the reconstructed axis_pickup layer has collected. */
 EMSCRIPTEN_KEEPALIVE int engine_pickups(void) { return gPickupCount; }
@@ -529,14 +536,35 @@ static void frame(void) {
         float wup[3] = {0,1,0};
         float r[3] = {f[1]*wup[2]-f[2]*wup[1], f[2]*wup[0]-f[0]*wup[2], f[0]*wup[1]-f[1]*wup[0]};
         float rl = sqrtf(r[0]*r[0]+r[1]*r[1]+r[2]*r[2]); if (rl<1e-6f) rl=1e-6f; r[0]/=rl; r[1]/=rl; r[2]/=rl;
-        float v = camSpeed * dt * ((keyDown[16]) ? 3.0f : 1.0f);   /* Shift = sprint */
-        float d[3] = {0,0,0};
-        if (keyDown['W']) { d[0]+=f[0]*v; d[1]+=f[1]*v; d[2]+=f[2]*v; }
-        if (keyDown['S']) { d[0]-=f[0]*v; d[1]-=f[1]*v; d[2]-=f[2]*v; }
-        if (keyDown['D']) { d[0]+=r[0]*v; d[1]+=r[1]*v; d[2]+=r[2]*v; }
-        if (keyDown['A']) { d[0]-=r[0]*v; d[1]-=r[1]*v; d[2]-=r[2]*v; }
-        if (keyDown['E'] || keyDown[' ']) d[1]+=v;
-        if (keyDown['Q']) d[1]-=v;
+        float sprint = (keyDown[16]) ? 3.0f : 1.0f;                /* Shift = sprint */
+        /* movement intent as a direction (sum of unit axes from the held keys) */
+        float iv[3] = {0,0,0};
+        if (keyDown['W']) { iv[0]+=f[0]; iv[1]+=f[1]; iv[2]+=f[2]; }
+        if (keyDown['S']) { iv[0]-=f[0]; iv[1]-=f[1]; iv[2]-=f[2]; }
+        if (keyDown['D']) { iv[0]+=r[0]; iv[1]+=r[1]; iv[2]+=r[2]; }
+        if (keyDown['A']) { iv[0]-=r[0]; iv[1]-=r[1]; iv[2]-=r[2]; }
+        if (keyDown['E'] || keyDown[' ']) iv[1]+=1.0f;
+        if (keyDown['Q']) iv[1]-=1.0f;
+        float d[3];
+        if (gAccelMove) {
+            /* OPTIONAL, UNVERIFIED "feel" model (engine_set_accel, off by default):
+               ramp a velocity toward the movement intent and glide to a stop with
+               friction, so free-fly walking feels less rigid. This is NOT a
+               reconstruction of the original server's input->acceleration transfer
+               (which has no offline ground truth — see README / docs/SERVER.md); it
+               is a local gameplay convenience, never presented as the real physics. */
+            float il = sqrtf(iv[0]*iv[0]+iv[1]*iv[1]+iv[2]*iv[2]);
+            float vmax = camSpeed * sprint;                        /* units/sec target */
+            float tv[3] = {0,0,0};
+            if (il > 1e-6f) { tv[0]=iv[0]/il*vmax; tv[1]=iv[1]/il*vmax; tv[2]=iv[2]/il*vmax; }
+            float k = 1.0f - expf(-8.0f * dt);                     /* ramp-up / friction rate */
+            camVel[0]+=(tv[0]-camVel[0])*k; camVel[1]+=(tv[1]-camVel[1])*k; camVel[2]+=(tv[2]-camVel[2])*k;
+            d[0]=camVel[0]*dt; d[1]=camVel[1]*dt; d[2]=camVel[2]*dt;
+        } else {
+            /* default: replay-verified const-velocity step (moves only while held) */
+            float v = camSpeed * dt * sprint;
+            d[0]=iv[0]*v; d[1]=iv[1]*v; d[2]=iv[2]*v;
+        }
         /* resolve walking against the real map geometry via the reconstructed
            broad+narrow collision (proj_hit_map): slide per axis so a wall blocks
            only the component into it and you can't walk through buildings */
