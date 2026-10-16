@@ -1007,6 +1007,23 @@ tails). So AXIS motion is **inertial / constant-velocity dead-reckoning between 
 with the authoritative position correcting the residual — consistent with the state-replication
 model (§4). The engine applies exactly this to tween remote players between packets.
 
+**Can the input→acceleration transfer be back-calculated from the replays? No — measured
+(`tools/analyze_replay_sampling.js`).** A reasonable idea: differentiate recorded positions and pair
+the result with the recorded input to recover the server's input→accel curve. Two measurements on this
+install's `AutoPlay/*.ape` show why it can't: **(1)** the input packets (type 1) are sparse (≈180–247 vs
+≈6–7k type-0) and carry *no* held-movement stream — the movement region (`payload[3..8]`) has exactly
+**1 distinct value per actor** (constant) in every replay, and it is the RNG-draw packet (§4,
+`verify_rng.js`), not a key-state log; **(2)** the type-0 state snapshots are sampled sparsely and very
+irregularly — per-actor tick gaps run from ~0 to a median of ~7–11k to maxima in the millions — so a
+clean second derivative (acceleration) can't be taken; the per-frame acceleration happens *between*
+snapshots and is never recorded. This is the same reason `verify_motion.js` finds constant-velocity
+optimal and constant-acceleration adding nothing. So replays ground-truth **positions/velocity** (which
+the port uses and verifies) and a rough max speed, but **not** the fine input→acceleration transfer,
+which operated below the snapshot resolution — confirming the §5 ceiling with data rather than
+assertion. (It is also not a functional blocker: walking uses the verified const-velocity model, replays
+read positions from file, and this port's multiplayer relays positions peer-to-peer — none require the
+server's accel curve.)
+
 The sim's **determinism core is also verified** (§4, `tools/verify_rng.js`): the type-1 packets
 draw two consecutive values of the shared `MSVC rand(srand(1))` pool per packet, and on `Test.ape`
 all **247/247** drawing packets match that pool at a unique index — the lockstep RNG that makes
